@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: qadam_demo
+Version: 0.1.0
+Summary: Qadam demo bot and web service
+Requires-Python: >=3.9
+Requires-Dist: aiogram>=3.2.0
+Requires-Dist: Flask>=3.0.0
+Requires-Dist: python-dotenv>=1.0.0

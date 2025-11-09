@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qadam_demo"
+version = "0.1.0"
+description = "Qadam demo bot and web service"
+requires-python = ">=3.9"
+dependencies = [
+    "aiogram>=3.2.0",
+    "Flask>=3.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["qadam_demo"]

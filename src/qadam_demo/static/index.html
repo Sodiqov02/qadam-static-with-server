@@ -90,40 +90,39 @@
     <ol>
       <li>Mijoz landingdan mahsulotlarni tanlaydi va buyurtma beradi.</li>
       <li>Buyurtma API orqali bevosita bot serveriga yuboriladi.</li>
-      <li>Admin Telegram’da buyurtmani qabul qiladi va boshqaradi.</li>
+      <li>Admin Telegram'da buyurtmani qabul qiladi va boshqaradi.</li>
     </ol>
-    <p class="note">* Demo rejimida buyurtmalar server logida ko‘rinadi. Telegramga yuborish uchun <code>.env</code> sozlang.</p>
+    <p class="note">* Demo rejimida buyurtmalar server logida ko'rinadi. Telegramga yuborish uchun <code>.env</code> sozlang.</p>
   </section>
 
   <section id="contact" class="contact">
     <h2>Aloqa</h2>
-    <p>Qadam — “qarshi tizim”. Biznesing sening qo'lingda.</p>
-    <a class="btn btn-ghost" href="https://t.me/" target="_blank" rel="noopener">Telegram orqali yozish</a>
+    <p>Qadam — "qarshi tizim". Biznesing sening qo'lingda.</p>
   </section>
 
-  <!-- Order Modal -->
   <div id="order-modal" class="modal hidden">
     <div class="modal-content">
-      <button class="modal-close" id="close-modal">×</button>
-      <h3>Ma'lumotlaringiz</h3>
+      <button id="close-modal" class="modal-close">&times;</button>
+      <h2>Buyurtma</h2>
       <form id="order-form">
-        <label>Ism</label>
-        <input type="text" id="name" required />
-        <label>Telefon</label>
-        <input type="tel" id="phone" placeholder="+998 90 123 45 67" required />
-        <label>Manzil</label>
-        <textarea id="address" rows="2" required></textarea>
-        <label>Izoh (ixtiyoriy)</label>
-        <textarea id="note" rows="2"></textarea>
-        <button type="submit" class="btn btn-primary full">Buyurtmani tasdiqlash</button>
+        <label for="name">Ism</label>
+        <input type="text" id="name" required>
+        <label for="phone">Telefon</label>
+        <input type="tel" id="phone" required>
+        <label for="address">Manzil</label>
+        <textarea id="address" required></textarea>
+        <label for="note">Izoh</label>
+        <textarea id="note"></textarea>
+        <div style="margin-top:14px">
+          <button type="submit" class="btn btn-primary full">Yuborish</button>
+        </div>
       </form>
     </div>
   </div>
 
   <footer class="footer">
-    <p>© 2025 Qadam — Svoy sayt. Svoy bot. Svoy mijozlar.</p>
+    <p>🤍 Qadam</p>
   </footer>
-
   <script src="script.js"></script>
 </body>
 </html>

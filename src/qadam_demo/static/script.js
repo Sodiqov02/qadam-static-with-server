@@ -98,12 +98,18 @@ async function submitOrder(ev){
     });
     if(!res.ok) throw new Error('Server xatosi');
     const data = await res.json();
-    alert(data.message || 'Buyurtma yuborildi!');
-    cart = []; saveCart(); renderCart(); closeModal();
-  }catch(err){
-    console.error(err);
-    alert('Buyurtma yuborilmadi. Keyinroq urinib ko\'ring.');
+    if(data.ok){
+      closeModal();
+      alert('Buyurtmangiz qabul qilindi! ✅\nSiz bilan bog\'lanamiz.');
+      cart = [];
+      saveCart();
+      renderCart();
+    }
+  }catch(e){
+    console.error(e);
+    alert('Xatolik yuz berdi. Iltimos, qayta urinib ko\'ring.');
   }
 }
 
+// Старт после загрузки страницы
 document.addEventListener('DOMContentLoaded', attach);

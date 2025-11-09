@@ -1,0 +1,10 @@
+{
+  // Point VS Code to the Python interpreter used in terminal
+  "python.defaultInterpreterPath": "C:\\Users\\lenovo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+  // Help the language server find our src package
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/src"
+  ],
+  // Use library code for richer type information
+  "python.analysis.useLibraryCodeForTypes": true
+}

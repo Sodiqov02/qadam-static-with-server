@@ -1,0 +1,12 @@
+pyproject.toml
+src/qadam_demo/__init__.py
+src/qadam_demo/cart.py
+src/qadam_demo/config.py
+src/qadam_demo/main.py
+src/qadam_demo/menu.py
+src/qadam_demo/server.py
+src/qadam_demo.egg-info/PKG-INFO
+src/qadam_demo.egg-info/SOURCES.txt
+src/qadam_demo.egg-info/dependency_links.txt
+src/qadam_demo.egg-info/requires.txt
+src/qadam_demo.egg-info/top_level.txt
