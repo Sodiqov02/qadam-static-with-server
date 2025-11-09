@@ -1,5 +1,8 @@
-from qadam_demo.server import create_app
+import uvicorn
+from src.config import settings
+
+# replaced old Flask run with FastAPI uvicorn runner
 
 if __name__ == "__main__":
-    app = create_app()
-    app.run(host="0.0.0.0", port=5500, debug=True)
+    # Run FastAPI app via uvicorn
+    uvicorn.run("src.api_app:app", host="0.0.0.0", port=settings.PORT, reload=False)

@@ -1,0 +1,19 @@
+{
+  "categories": [
+    {
+      "id": "pizzas",
+      "title": "Пиццы",
+      "items": [
+        {"id": "margarita", "name": "Маргарита", "price": 45000},
+        {"id": "pepperoni", "name": "Пепперони", "price": 52000}
+      ]
+    },
+    {
+      "id": "drinks",
+      "title": "Напитки",
+      "items": [
+        {"id": "cola05", "name": "Cola 0.5", "price": 12000}
+      ]
+    }
+  ]
+}
