@@ -38,10 +38,13 @@ def _main_kb() -> ReplyKeyboardMarkup:
 
 
 async def _load_menu() -> dict:
+    base_url = settings.API_BASE_URL
+    if not base_url:
+        raise RuntimeError("API_BASE_URL is not configured")
     global _menu_cache
     if _menu_cache is None:
         async with httpx.AsyncClient() as cx:
-            r = await cx.get(f"{settings.API_BASE_URL}/menu", timeout=10)
+            r = await cx.get(f"{base_url}/menu", timeout=10)
             r.raise_for_status()
             _menu_cache = r.json()
     return _menu_cache
@@ -124,7 +127,11 @@ async def start(message: types.Message):
 @router.message(Command("menu"))
 @router.message(lambda m: m.text and m.text.lower() == "menu")
 async def show_menu(message: types.Message):
-    menu = await _load_menu()
+    try:
+        menu = await _load_menu()
+    except Exception as exc:
+        await message.answer("Menyu vaqtincha mavjud emas. Keyinroq urinib ko'ring.")
+        return
     lines = []
     for cat in menu.get("categories", []):
         lines.append(f"[{cat.get('title','')}]")
@@ -136,7 +143,11 @@ async def show_menu(message: types.Message):
 
 @router.callback_query(lambda c: c.data == "menu")
 async def menu_callback(callback: CallbackQuery):
-    menu = await _load_menu()
+    try:
+        menu = await _load_menu()
+    except Exception:
+        await callback.answer("Menyu mavjud emas", show_alert=True)
+        return
     text_lines = []
     for cat in menu.get("categories", []):
         text_lines.append(f"[{cat.get('title','')}]")
