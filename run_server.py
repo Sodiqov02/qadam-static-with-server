@@ -1,8 +1,8 @@
 import uvicorn
+from src.api_app import app  # FastAPI application instance
 from src.config import settings
 
-# replaced old Flask run with FastAPI uvicorn runner
+# This file exposes `app` as run_server:app for process managers (e.g., Railway)
 
 if __name__ == "__main__":
-    # Run FastAPI app via uvicorn
-    uvicorn.run("src.api_app:app", host="0.0.0.0", port=settings.PORT, reload=False)
+    uvicorn.run("run_server:app", host="0.0.0.0", port=settings.PORT, reload=False)

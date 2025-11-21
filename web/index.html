@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Qadam Delivery</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="wrap hero">
+      <h1>Qadam Delivery</h1>
+      <div class="badge">Samarali: bir API, sayt va bot</div>
+    </div>
+  </header>
+  <main>
+    <section class="panel">
+      <p class="section-title">Menyu</p>
+      <div id="menu"></div>
+    </section>
+    <section class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <p class="section-title" style="margin:0;">Savat va buyurtma</p>
+        <button id="clear-cart" class="ghost-btn" type="button">Tozalash</button>
+      </div>
+      <div id="cart-empty" class="muted" style="margin:8px 0;">Hozircha bo'sh.</div>
+      <ul id="cart-list" class="cart-list"></ul>
+      <p id="cart-total" class="total-line"></p>
+      <hr style="border:1px solid var(--stroke); margin:12px 0;">
+      <form id="order-form">
+        <div class="grid-two">
+          <div class="field">
+            <label>Ism</label>
+            <input name="name" autocomplete="name" required />
+          </div>
+          <div class="field">
+            <label>Telefon</label>
+            <input name="phone" autocomplete="tel" required />
+          </div>
+        </div>
+        <div class="field">
+          <label>Manzil</label>
+          <textarea name="address" autocomplete="street-address" required></textarea>
+        </div>
+        <div class="field">
+          <label>Izoh (ixtiyoriy)</label>
+          <textarea name="comment" placeholder="-"></textarea>
+        </div>
+        <button type="submit" id="submit-order">Yuborish</button>
+        <p id="order-status" class="muted status"></p>
+      </form>
+    </section>
+  </main>
+  <script>
+    const menuEl = document.getElementById("menu");
+    const cartList = document.getElementById("cart-list");
+    const cartEmpty = document.getElementById("cart-empty");
+    const cartTotal = document.getElementById("cart-total");
+    const clearBtn = document.getElementById("clear-cart");
+    const orderForm = document.getElementById("order-form");
+    const submitBtn = document.getElementById("submit-order");
+    const statusEl = document.getElementById("order-status");
+
+    const cart = new Map();
+    let menuCache = null;
+
+    const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
+
+    async function loadMenu() {
+      const res = await fetch("/menu", { credentials: "same-origin" });
+      if (!res.ok) throw new Error("Menu yuklab bo'lmadi");
+      const data = await res.json();
+      menuCache = data;
+      renderMenu(data.categories || []);
+    }
+
+    function safeText(el, text) {
+      el.textContent = text ?? "";
+      return el;
+    }
+
+    function renderMenu(categories) {
+      menuEl.innerHTML = "";
+      categories.forEach((cat) => {
+        const box = document.createElement("div");
+        box.className = "category";
+
+        const h3 = document.createElement("h3");
+        safeText(h3, cat.title);
+        box.appendChild(h3);
+
+        (cat.items || []).forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "item";
+          const left = document.createElement("div");
+          const name = document.createElement("strong");
+          safeText(name, item.name);
+          const desc = document.createElement("small");
+          safeText(desc, item.description || "");
+          left.appendChild(name);
+          left.appendChild(desc);
+
+          const right = document.createElement("div");
+          right.className = "price-col";
+          const price = document.createElement("div");
+          safeText(price, formatPrice(item.price));
+          const btn = document.createElement("button");
+          btn.type = "button";
+          safeText(btn, "Qo'shish");
+          btn.addEventListener("click", () => addToCart(item));
+          right.appendChild(price);
+          right.appendChild(btn);
+
+          row.appendChild(left);
+          row.appendChild(right);
+          box.appendChild(row);
+        });
+        menuEl.appendChild(box);
+      });
+    }
+
+    function addToCart(item) {
+      const current = cart.get(item.id) || { item, qty: 0 };
+      current.qty += 1;
+      cart.set(item.id, current);
+      renderCart();
+    }
+
+    function updateQty(id, delta) {
+      const current = cart.get(id);
+      if (!current) return;
+      current.qty += delta;
+      if (current.qty <= 0) cart.delete(id);
+      else cart.set(id, current);
+      renderCart();
+    }
+
+    function clearCart() {
+      cart.clear();
+      renderCart();
+    }
+
+    function renderCart() {
+      cartList.innerHTML = "";
+      const items = Array.from(cart.values());
+      if (!items.length) {
+        cartEmpty.style.display = "block";
+        cartTotal.textContent = "";
+        return;
+      }
+      cartEmpty.style.display = "none";
+
+      let total = 0;
+      items.forEach(({ item, qty }) => {
+        const li = document.createElement("li");
+        li.className = "cart-item";
+        const lineTotal = Number(item.price || 0) * qty;
+        total += lineTotal;
+        const left = document.createElement("span");
+        safeText(left, `${item.name} x${qty}`);
+        const right = document.createElement("span");
+        safeText(right, formatPrice(lineTotal));
+        li.appendChild(left);
+        li.appendChild(right);
+        li.addEventListener("click", () => updateQty(item.id, -1));
+        cartList.appendChild(li);
+      });
+      cartTotal.textContent = "Jami: " + formatPrice(total);
+    }
+
+    async function submitOrder(evt) {
+      evt.preventDefault();
+      statusEl.textContent = "";
+      if (!cart.size) {
+        statusEl.textContent = "Savat bo'sh. Avval menyudan qo'shing.";
+        return;
+      }
+      submitBtn.disabled = true;
+      try {
+        const form = new FormData(orderForm);
+        const payload = {
+          items: Array.from(cart.values()).map(({ item, qty }) => ({ item_id: item.id, qty })),
+          customer: {
+            name: (form.get("name") || "").trim(),
+            phone: (form.get("phone") || "").trim(),
+            address: (form.get("address") || "").trim(),
+            comment: (form.get("comment") || "-").trim() || "-",
+          },
+          source: "site",
+        };
+        const res = await fetch("/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          credentials: "same-origin",
+        });
+        if (!res.ok) throw new Error("Yuborishda xatolik");
+        const data = await res.json();
+        statusEl.textContent = `Buyurtma qabul qilindi: #${data.order_id}`;
+        clearCart();
+        orderForm.reset();
+      } catch (err) {
+        statusEl.textContent = err.message || "Xatolik";
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    clearBtn.addEventListener("click", clearCart);
+    orderForm.addEventListener("submit", submitOrder);
+
+    loadMenu().catch((e) => {
+      menuEl.innerHTML = `<p class="muted">${e.message}</p>`;
+    });
+  </script>
+</body>
+</html>
