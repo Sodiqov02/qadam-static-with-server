@@ -1,3 +1,7 @@
 aiogram>=3.2.0
 Flask>=3.0.0
 python-dotenv>=1.0.0
+fastapi>=0.110.0
+uvicorn>=0.23.0
+httpx>=0.24.0
+pydantic-settings>=2.2.0

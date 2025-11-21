@@ -1,6 +1,6 @@
 {
-  // Point VS Code to the Python interpreter used in terminal
-  "python.defaultInterpreterPath": "C:\\Users\\lenovo\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+  // Point VS Code to the project virtualenv if present
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
   // Help the language server find our src package
   "python.analysis.extraPaths": [
     "${workspaceFolder}/src"

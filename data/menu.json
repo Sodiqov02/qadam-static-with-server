@@ -2,17 +2,50 @@
   "categories": [
     {
       "id": "pizzas",
-      "title": "Пиццы",
+      "title": "Pitsalar",
       "items": [
-        {"id": "margarita", "name": "Маргарита", "price": 45000},
-        {"id": "pepperoni", "name": "Пепперони", "price": 52000}
+        {
+          "id": "pepperoni",
+          "name": "Pepperoni",
+          "price": 65000,
+          "description": "Mol go'shti kolbasasi, mozzarella va tomat sousi."
+        },
+        {
+          "id": "margarita",
+          "name": "Margarita",
+          "price": 50000,
+          "description": "Pomidor sousi, mozzarella va reyhan."
+        }
+      ]
+    },
+    {
+      "id": "street-food",
+      "title": "Ko'cha taomi",
+      "items": [
+        {
+          "id": "cheeseburger",
+          "name": "Cheeseburger",
+          "price": 45000,
+          "description": "Mol go'shti kotlet, cheddar va maxsus sous."
+        },
+        {
+          "id": "shawarma",
+          "name": "Shawarma",
+          "price": 38000,
+          "description": "Tovuqli shawarma yangi sabzavot va sous bilan."
+        }
       ]
     },
     {
       "id": "drinks",
-      "title": "Напитки",
+      "title": "Ichimliklar",
       "items": [
-        {"id": "cola05", "name": "Cola 0.5", "price": 12000}
+        {
+          "id": "cola-1l",
+          "name": "Cola 1L",
+          "price": 12000,
+          "description": "Muzdek Coca-Cola 1 litr."
+        }
       ]
     }
   ]
