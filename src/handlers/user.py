@@ -19,9 +19,6 @@ router = Router()
 # In-memory carts: user_id -> {item_id: qty}
 user_carts: dict[int, dict[str, int]] = {}
 
-# Cached menu data
-_menu_cache: dict | None = None
-
 
 class Checkout(StatesGroup):
     name = State()
@@ -38,16 +35,15 @@ def _main_kb() -> ReplyKeyboardMarkup:
 
 
 async def _load_menu() -> dict:
-    base_url = settings.API_BASE_URL
+    base_url = (settings.API_BASE_URL or "").rstrip("/")
+    if base_url.endswith("/api"):
+        base_url = base_url[:-4]
     if not base_url:
         raise RuntimeError("API_BASE_URL is not configured")
-    global _menu_cache
-    if _menu_cache is None:
-        async with httpx.AsyncClient() as cx:
-            r = await cx.get(f"{base_url}/menu", timeout=10)
-            r.raise_for_status()
-            _menu_cache = r.json()
-    return _menu_cache
+    async with httpx.AsyncClient() as cx:
+        r = await cx.get(f"{base_url}/menu", timeout=10)
+        r.raise_for_status()
+        return r.json()
 
 
 def _item_map(menu: dict) -> dict[str, dict]:
