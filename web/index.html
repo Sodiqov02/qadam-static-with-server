@@ -7,27 +7,54 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header>
-    <div class="wrap hero">
-      <h1>Qadam Delivery</h1>
-      <div class="badge">Samarali: bir API, sayt va bot</div>
-    </div>
-  </header>
-  <main>
-    <section class="panel">
-      <p class="section-title">Menyu</p>
-      <div id="menu"></div>
-    </section>
-    <section class="panel">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <p class="section-title" style="margin:0;">Savat va buyurtma</p>
+  <div class="page">
+    <aside class="promo-card">
+      <div class="promo-plate">
+        <p class="pill">Issiq &amp; mazali</p>
+        <h1>Qadam menyusi</h1>
+        <p class="promo-copy">
+          Tez yetkazib berish, bir xil menyu vaqti‑soati bilan.
+        </p>
+        <div class="promo-qr">
+          <div class="qr-placeholder">QR</div>
+          <div class="promo-meta">
+            <span>Bot orqali buyurtma</span>
+            <small>@deliveringbotliqibot</small>
+          </div>
+        </div>
+      </div>
+    </aside>
+    <main class="content">
+      <header class="content-head">
+        <div>
+          <p class="eyebrow">Bugungi tanlov</p>
+          <h2>Menyu</h2>
+        </div>
+        <div class="lang-switch">
+          <button class="ghost-btn">Uz</button>
+          <button class="ghost-btn ghost-active">Ru</button>
+          <button class="ghost-btn">En</button>
+        </div>
+      </header>
+
+      <section>
+        <div id="menu" class="menu-grid"></div>
+      </section>
+    </main>
+    <aside class="cart-pane">
+      <div class="cart-head">
+        <div>
+          <p class="section-title">Savat</p>
+          <small class="muted">Buyurtmani shu yerda yakunlang</small>
+        </div>
         <button id="clear-cart" class="ghost-btn" type="button">Tozalash</button>
       </div>
-      <div id="cart-empty" class="muted" style="margin:8px 0;">Hozircha bo'sh.</div>
-      <ul id="cart-list" class="cart-list"></ul>
+      <div class="cart-body">
+        <div id="cart-empty" class="muted">Hozircha bo'sh.</div>
+        <ul id="cart-list" class="cart-list"></ul>
+      </div>
       <p id="cart-total" class="total-line"></p>
-      <hr style="border:1px solid var(--stroke); margin:12px 0;">
-      <form id="order-form">
+      <form id="order-form" class="form">
         <div class="grid-two">
           <div class="field">
             <label>Ism</label>
@@ -49,8 +76,8 @@
         <button type="submit" id="submit-order">Yuborish</button>
         <p id="order-status" class="muted status"></p>
       </form>
-    </section>
-  </main>
+    </aside>
+  </div>
   <script>
     const menuEl = document.getElementById("menu");
     const cartList = document.getElementById("cart-list");
@@ -82,40 +109,47 @@
     function renderMenu(categories) {
       menuEl.innerHTML = "";
       categories.forEach((cat) => {
-        const box = document.createElement("div");
-        box.className = "category";
-
-        const h3 = document.createElement("h3");
-        safeText(h3, cat.title);
-        box.appendChild(h3);
-
         (cat.items || []).forEach((item) => {
-          const row = document.createElement("div");
-          row.className = "item";
-          const left = document.createElement("div");
-          const name = document.createElement("strong");
-          safeText(name, item.name);
-          const desc = document.createElement("small");
-          safeText(desc, item.description || "");
-          left.appendChild(name);
-          left.appendChild(desc);
+          const card = document.createElement("div");
+          card.className = "menu-card";
 
-          const right = document.createElement("div");
-          right.className = "price-col";
+          // Optional badge for categories that contain special words
+          if (cat.title && cat.title.toLowerCase().includes("maxs")) {
+            const badge = document.createElement("div");
+            badge.className = "badge-green";
+            safeText(badge, "100% tabiy");
+            card.appendChild(badge);
+          }
+
+          const img = document.createElement("div");
+          img.className = "img-placeholder";
+          safeText(img, item.name || "");
+          card.appendChild(img);
+
+          const title = document.createElement("h4");
+          safeText(title, item.name);
+          card.appendChild(title);
+
+          const desc = document.createElement("p");
+          safeText(desc, item.description || "");
+          card.appendChild(desc);
+
+          const priceRow = document.createElement("div");
+          priceRow.className = "price-row";
           const price = document.createElement("div");
+          price.className = "price";
           safeText(price, formatPrice(item.price));
           const btn = document.createElement("button");
+          btn.className = "add-btn";
           btn.type = "button";
-          safeText(btn, "Qo'shish");
+          safeText(btn, "+");
           btn.addEventListener("click", () => addToCart(item));
-          right.appendChild(price);
-          right.appendChild(btn);
+          priceRow.appendChild(price);
+          priceRow.appendChild(btn);
+          card.appendChild(priceRow);
 
-          row.appendChild(left);
-          row.appendChild(right);
-          box.appendChild(row);
+          menuEl.appendChild(card);
         });
-        menuEl.appendChild(box);
       });
     }
 
