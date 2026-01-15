@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import datetime
+import logging
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +22,7 @@ from src.store import (
 )
 
 app = FastAPI(title="Qadam API")
+logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 INDEX_FILE = WEB_DIR / "index.html"
 STYLE_FILE = WEB_DIR / "style.css"
@@ -61,7 +63,10 @@ def _tenant_dep(slug: str):
 
 @app.on_event("startup")
 def ensure_default():
-    ensure_default_tenant()
+    try:
+        ensure_default_tenant()
+    except Exception:
+        logger.exception("ensure_default_tenant failed during startup")
 
 
 @app.get("/", include_in_schema=False)

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     API_BASE_URL: str = Field(default_factory=lambda: os.getenv("API_BASE_URL", ""))
     PORT: int = Field(default_factory=lambda: int(os.getenv("PORT", "8000")))
     DATABASE_URL: str = Field(
-        default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./qadam_demo.db"),
+        ...,
         description="Database URL (postgresql+psycopg://...)",
     )
 
