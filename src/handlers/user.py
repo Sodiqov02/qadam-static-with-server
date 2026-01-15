@@ -14,7 +14,7 @@ from aiogram.types import (
 
 from src.bot_init import get_bot
 from src.config import settings
-from src.store import get_user_tenant, set_user_tenant
+from src.store import DEFAULT_TENANT_SLUG, get_user_tenant, set_user_tenant
 
 router = Router()
 
@@ -50,17 +50,14 @@ async def _get_tenant_slug(user_id: int) -> str | None:
     if tenant and getattr(tenant, "slug", None):
         user_tenants_cache[user_id] = tenant.slug
         return tenant.slug
-    return None
+    await _remember_tenant(user_id, DEFAULT_TENANT_SLUG)
+    return DEFAULT_TENANT_SLUG
 
 
 async def _require_tenant_slug(message: types.Message) -> str | None:
     if not message.from_user:
         return None
-    slug = await _get_tenant_slug(message.from_user.id)
-    if slug:
-        return slug
-    await message.answer("Avval /start <slug> yoki /tenant <slug> bilan filialni tanlang.")
-    return None
+    return await _get_tenant_slug(message.from_user.id)
 
 
 async def _load_menu(slug: str) -> dict:
@@ -148,13 +145,14 @@ async def start(message: types.Message):
         parts = message.text.split(maxsplit=1)
         if len(parts) == 2:
             slug = parts[1].strip()
-    if message.from_user and slug:
-        await _remember_tenant(message.from_user.id, slug)
+    if message.from_user:
+        await _remember_tenant(message.from_user.id, slug or DEFAULT_TENANT_SLUG)
+    if slug:
         await message.answer(f"Tugallandi. Tanlangan filial: {slug}", reply_markup=_main_kb())
     else:
         await message.answer(
-            "Salom! Menu / savat / tozalash uchun tugmalarni ishlating. "
-            "Avval /start <slug> yoki /tenant <slug> bilan filialni tanlang.",
+            f"Salom! Demo menyu yoqildi: {DEFAULT_TENANT_SLUG}. "
+            "Menu / savat / tozalash uchun tugmalarni ishlating.",
             reply_markup=_main_kb(),
         )
 
