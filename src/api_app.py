@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.models import Menu, OrderIn, OrderOut
+from src.db import init_db
 from src.notifier import notify_admin  # asynchronous notifier
 from src.notifier import notify_reservation_created, notify_reservation_updated
 from src.store import (
@@ -63,6 +64,10 @@ def _tenant_dep(slug: str):
 
 @app.on_event("startup")
 def ensure_default():
+    try:
+        init_db()
+    except Exception:
+        logger.exception("init_db failed during startup")
     try:
         ensure_default_tenant()
     except Exception:
