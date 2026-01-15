@@ -1,2 +1,2 @@
-web: uvicorn run_server:app --host 0.0.0.0 --port 8000
+web: uvicorn run_server:app --host 0.0.0.0 --port $PORT
 worker: python run_bot.py
