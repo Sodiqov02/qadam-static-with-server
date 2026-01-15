@@ -29,23 +29,98 @@ def _menu_fallback() -> dict:
         return {}
 
 
+def seed_demo_menu(tenant: Tenant) -> bool:
+    demo_menu = _menu_fallback()
+    categories = demo_menu.get("categories") or []
+    if not categories:
+        return False
+
+    with get_session() as session:
+        has_category = (
+            session.execute(
+                select(MenuCategory.id).where(MenuCategory.tenant_id == tenant.id).limit(1)
+            ).scalar_one_or_none()
+            is not None
+        )
+        has_item = (
+            session.execute(select(MenuItem.id).where(MenuItem.tenant_id == tenant.id).limit(1)).scalar_one_or_none()
+            is not None
+        )
+        if has_category and has_item:
+            return False
+
+        if not has_category:
+            for idx, cat in enumerate(categories):
+                category = MenuCategory(
+                    tenant_id=tenant.id,
+                    title=cat.get("title") or f"Category {idx+1}",
+                    sort=idx,
+                )
+                session.add(category)
+                session.flush()
+                for jdx, item in enumerate(cat.get("items") or []):
+                    session.add(
+                        MenuItem(
+                            tenant_id=tenant.id,
+                            category_id=category.id,
+                            title=item.get("name") or item.get("title") or f"Item {jdx+1}",
+                            price=int(item.get("price") or 0),
+                            description=item.get("description"),
+                            sort=jdx,
+                            is_active=True,
+                        )
+                    )
+            return True
+
+        first_category_id = session.execute(
+            select(MenuCategory.id)
+            .where(MenuCategory.tenant_id == tenant.id)
+            .order_by(MenuCategory.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if not first_category_id:
+            return False
+
+        seed_items = categories[0].get("items") or []
+        if not seed_items:
+            return False
+        for jdx, item in enumerate(seed_items):
+            session.add(
+                MenuItem(
+                    tenant_id=tenant.id,
+                    category_id=first_category_id,
+                    title=item.get("name") or item.get("title") or f"Item {jdx+1}",
+                    price=int(item.get("price") or 0),
+                    description=item.get("description"),
+                    sort=jdx,
+                    is_active=True,
+                )
+            )
+        return True
+
+
 def ensure_default_tenant() -> Tenant:
     with get_session() as session:
         tenant = session.execute(select(Tenant).where(Tenant.slug == DEFAULT_TENANT_SLUG)).scalar_one_or_none()
         if tenant:
             if not tenant.admin_chat_id and getattr(settings, "ADMIN_CHAT_ID", None):
                 tenant.admin_chat_id = settings.ADMIN_CHAT_ID
-            return tenant
-        tenant = Tenant(
-            slug=DEFAULT_TENANT_SLUG,
-            name="Default tenant",
-            features={},
-            admin_chat_id=getattr(settings, "ADMIN_CHAT_ID", None),
-        )
-        session.add(tenant)
-        session.commit()
-        session.refresh(tenant)
-        return tenant
+            session.flush()
+            session.refresh(tenant)
+            seeded_tenant = tenant
+        else:
+            tenant = Tenant(
+                slug=DEFAULT_TENANT_SLUG,
+                name="Default tenant",
+                features={},
+                admin_chat_id=getattr(settings, "ADMIN_CHAT_ID", None),
+            )
+            session.add(tenant)
+            session.flush()
+            session.refresh(tenant)
+            seeded_tenant = tenant
+    seed_demo_menu(seeded_tenant)
+    return seeded_tenant
 
 
 def get_tenant_by_slug(slug: str) -> Optional[Tenant]:
