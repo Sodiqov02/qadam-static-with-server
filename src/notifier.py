@@ -1,20 +1,43 @@
-import json
-from pathlib import Path
+from typing import Optional
 
-from src.bot_init import bot
+from aiogram import Bot
+from src.bot_init import get_bot
 from src.config import settings
-from src.store import get_order
+from src.db_models import Tenant
+from src.store import get_menu_for_tenant, get_order, list_reservations
 
-MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
+
+def _tget(obj, key, default=None):
+    # Works for both dict-like and attribute objects (Tenant)
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+def _get_bot() -> Optional[Bot]:
+    if not settings.BOT_TOKEN:
+        return None
+    return get_bot()
 
 
-def _price_lookup() -> dict:
+async def _safe_send(chat_id: int, text: str) -> None:
+    bot = _get_bot()
+    if not bot:
+        return
     try:
-        data = json.loads(MENU_PATH.read_text(encoding="utf-8"))
+        await bot.send_message(chat_id=chat_id, text=text)
     except Exception:
+        return
+
+
+def _price_lookup(order: dict) -> dict:
+    tenant = order.get("tenant")
+    if not isinstance(tenant, Tenant):
         return {}
+    menu = get_menu_for_tenant(tenant)
     mapping = {}
-    for cat in data.get("categories", []):
+    for cat in menu.get("categories", []):
         for it in cat.get("items", []):
             mapping[str(it.get("id"))] = {
                 "name": it.get("name", ""),
@@ -24,16 +47,20 @@ def _price_lookup() -> dict:
 
 
 async def notify_admin(order_id: int):
-    """Send a short order notification to the admin chat."""
+    """Send a short order notification to the admin chat for the order's tenant."""
     order = get_order(order_id)
     if not order:
         return
-    # Bot уже шлет отдельное уведомление; чтобы не дублировать, пропускаем bot-источник
+    tenant = order.get("tenant")
+    if not isinstance(tenant, Tenant):
+        return
+
+    # Skip duplicating bot-origin orders (bot already notifies admin)
     source = str(order.get("source") or "").lower()
     if source == "bot":
         return
 
-    price_map = _price_lookup()
+    price_map = _price_lookup(order)
     total = 0
     item_lines = []
     for i in order["items"]:
@@ -60,4 +87,53 @@ async def notify_admin(order_id: int):
             f"Source: {order['source']}",
         ]
     )
-    await bot.send_message(chat_id=settings.ADMIN_CHAT_ID, text=text)
+    chat_id = _tget(tenant, "admin_chat_id")
+    if chat_id:
+        await _safe_send(int(chat_id), text)
+
+
+async def notify_reservation_created(tenant: Tenant, rid: int):
+    chat_id = _tget(tenant, "admin_chat_id")
+    if not chat_id:
+        return
+
+    items = list_reservations(tenant)
+    r = next((x for x in items if x.get("id") == rid), None)
+
+    if not r:
+        text = f"[NEW RESERVATION #{rid}]\n(no details found)"
+    else:
+        text = (
+            f"[NEW RESERVATION #{rid}]\n"
+            f"Name: {r.get('name','')}\n"
+            f"Phone: {r.get('phone','')}\n"
+            f"Guests: {r.get('guests','')}\n"
+            f"DateTime: {r.get('datetime','')}\n"
+            f"Status: {r.get('status','')}\n"
+            f"Table: {r.get('table_id','')}\n"
+        )
+
+    await _safe_send(int(chat_id), text)
+
+
+async def notify_reservation_updated(tenant: Tenant, rid: int):
+    chat_id = _tget(tenant, "admin_chat_id")
+    if not chat_id:
+        return
+
+    items = list_reservations(tenant)
+    r = next((x for x in items if x.get("id") == rid), None)
+
+    if not r:
+        text = f"[RESERVATION UPDATED #{rid}]\n(no details found)"
+    else:
+        text = (
+            f"[RESERVATION UPDATED #{rid}]\n"
+            f"Status: {r.get('status','')}\n"
+            f"Name: {r.get('name','')}\n"
+            f"Phone: {r.get('phone','')}\n"
+            f"Guests: {r.get('guests','')}\n"
+            f"DateTime: {r.get('datetime','')}\n"
+        )
+
+    await _safe_send(int(chat_id), text)

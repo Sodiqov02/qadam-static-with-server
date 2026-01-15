@@ -1,19 +1,291 @@
-from typing import Dict, Any
-from itertools import count
+import json
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
 
-ORDERS: Dict[int, Dict[str, Any]] = {}
-_COUNTER = count(1)
+from sqlalchemy import select, update
+from sqlalchemy.exc import NoResultFound
 
-def add_order(data: Dict[str, Any]) -> int:
-    oid = next(_COUNTER)
-    ORDERS[oid] = {"id": oid, "status": "new", **data}
-    return oid
+from src.config import settings
+from src.db import get_session
+from src.db_models import (
+    BotUser,
+    MenuCategory,
+    MenuItem,
+    Order,
+    Reservation,
+    Table,
+    Tenant,
+)
 
-def set_status(oid: int, status: str) -> bool:
-    if oid in ORDERS:
-        ORDERS[oid]["status"] = status
+DEFAULT_TENANT_SLUG = "default"
+MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
+
+
+def _menu_fallback() -> dict:
+    try:
+        return json.loads(MENU_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def ensure_default_tenant() -> Tenant:
+    with get_session() as session:
+        tenant = session.execute(select(Tenant).where(Tenant.slug == DEFAULT_TENANT_SLUG)).scalar_one_or_none()
+        if tenant:
+            if not tenant.admin_chat_id and getattr(settings, "ADMIN_CHAT_ID", None):
+                tenant.admin_chat_id = settings.ADMIN_CHAT_ID
+            return tenant
+        tenant = Tenant(
+            slug=DEFAULT_TENANT_SLUG,
+            name="Default tenant",
+            features={},
+            admin_chat_id=getattr(settings, "ADMIN_CHAT_ID", None),
+        )
+        session.add(tenant)
+        session.commit()
+        session.refresh(tenant)
+        return tenant
+
+
+def get_tenant_by_slug(slug: str) -> Optional[Tenant]:
+    with get_session() as session:
+        return session.execute(select(Tenant).where(Tenant.slug == slug)).scalar_one_or_none()
+
+
+def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
+    with get_session() as session:
+        categories = session.execute(
+            select(MenuCategory).where(MenuCategory.tenant_id == tenant_id).order_by(MenuCategory.sort, MenuCategory.id)
+        ).scalars().all()
+        if not categories:
+            return []
+        items = session.execute(
+            select(MenuItem).where(MenuItem.tenant_id == tenant_id, MenuItem.is_active.is_(True))
+        ).scalars().all()
+        items_by_cat: Dict[int, List[MenuItem]] = {}
+        for item in items:
+            items_by_cat.setdefault(item.category_id, []).append(item)
+        result = []
+        for cat in categories:
+            cat_items = sorted(items_by_cat.get(cat.id, []), key=lambda x: (x.sort, x.id))
+            if not cat_items:
+                continue
+            result.append(
+                {
+                    "id": str(cat.id),
+                    "title": cat.title,
+                    "items": [
+                        {
+                            "id": str(it.id),
+                            "name": it.title,
+                            "price": int(it.price or 0),
+                            "description": it.description or "",
+                        }
+                        for it in cat_items
+                    ],
+                }
+            )
+        return result
+
+
+def get_menu_for_tenant(tenant: Tenant) -> dict:
+    menu_from_db = _menu_from_db(tenant.id)
+    if menu_from_db:
+        return {"categories": menu_from_db}
+    # fallback for default tenant only
+    if tenant.slug == DEFAULT_TENANT_SLUG:
+        return _menu_fallback()
+    return {"categories": []}
+
+
+def import_menu_json(tenant: Tenant, menu_data: dict) -> None:
+    categories = menu_data.get("categories") or []
+    with get_session() as session:
+        tenant_db = session.execute(select(Tenant).where(Tenant.id == tenant.id)).scalar_one_or_none()
+        if not tenant_db:
+            raise ValueError("Tenant not found for import")
+        session.query(MenuItem).filter(MenuItem.tenant_id == tenant.id).delete()
+        session.query(MenuCategory).filter(MenuCategory.tenant_id == tenant.id).delete()
+        session.flush()
+        for idx, cat in enumerate(categories):
+            category = MenuCategory(tenant_id=tenant.id, title=cat.get("title") or f"Category {idx+1}", sort=idx)
+            session.add(category)
+            session.flush()
+            for jdx, item in enumerate(cat.get("items") or []):
+                session.add(
+                    MenuItem(
+                        tenant_id=tenant.id,
+                        category_id=category.id,
+                        title=item.get("name") or item.get("title") or f"Item {jdx+1}",
+                        price=int(item.get("price") or 0),
+                        description=item.get("description"),
+                        sort=jdx,
+                        is_active=True,
+                    )
+                )
+
+
+def _price_lookup(tenant: Tenant) -> Dict[str, Dict[str, Any]]:
+    menu = get_menu_for_tenant(tenant)
+    mapping: Dict[str, Dict[str, Any]] = {}
+    for cat in menu.get("categories", []):
+        for it in cat.get("items", []):
+            mapping[str(it.get("id"))] = {
+                "name": it.get("name", ""),
+                "price": int(it.get("price") or 0),
+            }
+    return mapping
+
+
+def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
+    tenant = tenant or ensure_default_tenant()
+    price_map = _price_lookup(tenant)
+    total = Decimal(0)
+    items_payload = []
+    for it in data.get("items", []):
+        qty = int(it.get("qty") or 0)
+        item_id = str(it.get("item_id"))
+        meta = price_map.get(item_id, {})
+        price = Decimal(meta.get("price", 0))
+        line_total = price * qty
+        total += line_total
+        items_payload.append({"item_id": item_id, "qty": qty})
+    total = total.quantize(Decimal("0.01"))
+
+    order = Order(
+        tenant_id=tenant.id,
+        source=data.get("source") or "site",
+        status="new",
+        items=items_payload,
+        total=total,
+        customer_name=data.get("customer", {}).get("name"),
+        customer_phone=data.get("customer", {}).get("phone"),
+        customer_address=data.get("customer", {}).get("address"),
+        raw_payload=data,
+    )
+    with get_session() as session:
+        session.add(order)
+        session.flush()
+        return order.id
+
+
+def get_order(oid: int) -> Optional[Dict[str, Any]]:
+    with get_session() as session:
+        row = session.execute(
+            select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
+        ).first()
+        if not row:
+            return None
+        order, tenant = row
+        return {
+            "id": order.id,
+            "tenant": tenant,
+            "tenant_id": order.tenant_id,
+            "status": order.status,
+            "items": order.items or [],
+            "total": float(order.total or 0),
+            "customer": {
+                "name": order.customer_name,
+                "phone": order.customer_phone,
+                "address": order.customer_address,
+                "comment": (order.raw_payload or {}).get("customer", {}).get("comment") if order.raw_payload else None,
+            },
+            "source": order.source,
+        }
+
+
+def set_status(oid: int, status: str, admin_chat_id: Optional[int] = None) -> bool:
+    with get_session() as session:
+        row = session.execute(
+            select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
+        ).first()
+        if not row:
+            return False
+        order, tenant = row
+        if admin_chat_id and tenant.admin_chat_id and tenant.admin_chat_id != admin_chat_id:
+            return False
+        session.execute(update(Order).where(Order.id == oid).values(status=status))
         return True
-    return False
 
-def get_order(oid: int):
-    return ORDERS.get(oid)
+
+def tenant_has_feature(tenant: Tenant, feature: str) -> bool:
+    feat = (tenant.features or {}).get(feature)
+    return bool(feat) if isinstance(feat, (bool, int)) else False
+
+
+def create_reservation(tenant: Tenant, payload: Dict[str, Any]) -> int:
+    if not tenant_has_feature(tenant, "reservations"):
+        raise PermissionError("Feature disabled")
+    res = Reservation(
+        tenant_id=tenant.id,
+        table_id=payload.get("table_id"),
+        name=payload.get("name"),
+        phone=payload.get("phone"),
+        datetime=payload.get("datetime"),
+        guests=payload.get("guests", 1),
+        status="new",
+    )
+    with get_session() as session:
+        session.add(res)
+        session.flush()
+        return res.id
+
+
+def list_reservations(tenant: Tenant) -> List[Dict[str, Any]]:
+    with get_session() as session:
+        reservations = session.execute(
+            select(Reservation).where(Reservation.tenant_id == tenant.id).order_by(Reservation.created_at.desc())
+        ).scalars()
+        return [
+            {
+                "id": r.id,
+                "table_id": r.table_id,
+                "name": r.name,
+                "phone": r.phone,
+                "datetime": r.datetime.isoformat() if r.datetime else None,
+                "guests": r.guests,
+                "status": r.status,
+            }
+            for r in reservations
+        ]
+
+
+def update_reservation_status(tenant: Tenant, rid: int, status: str) -> bool:
+    with get_session() as session:
+        res = session.execute(
+            select(Reservation).where(Reservation.tenant_id == tenant.id, Reservation.id == rid)
+        ).scalar_one_or_none()
+        if not res:
+            return False
+        res.status = status
+        return True
+
+
+def set_user_tenant(user_id: int, slug: str) -> Optional[Tenant]:
+    with get_session() as session:
+        tenant = session.execute(select(Tenant).where(Tenant.slug == slug)).scalar_one_or_none()
+        if not tenant:
+            return None
+        existing = session.execute(select(BotUser).where(BotUser.user_id == user_id)).scalar_one_or_none()
+        if existing:
+            existing.tenant_id = tenant.id
+            existing.slug = slug
+        else:
+            session.add(BotUser(user_id=user_id, tenant_id=tenant.id, slug=slug))
+        return tenant
+
+
+def get_user_tenant(user_id: int) -> Optional[Tenant]:
+    with get_session() as session:
+        bot_user = session.execute(select(BotUser).where(BotUser.user_id == user_id)).scalar_one_or_none()
+        if not bot_user or not bot_user.slug:
+            return None
+        return session.execute(select(Tenant).where(Tenant.id == bot_user.tenant_id)).scalar_one_or_none()
+
+
+def is_admin_chat(chat_id: int) -> bool:
+    with get_session() as session:
+        return (
+            session.execute(select(Tenant).where(Tenant.admin_chat_id == chat_id)).scalar_one_or_none() is not None
+        )

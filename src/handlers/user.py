@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from aiogram import Router, types
 from aiogram.filters import Command
@@ -11,13 +12,16 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from src.bot_init import bot
+from src.bot_init import get_bot
 from src.config import settings
+from src.store import get_user_tenant, set_user_tenant
 
 router = Router()
 
 # In-memory carts: user_id -> {item_id: qty}
 user_carts: dict[int, dict[str, int]] = {}
+# In-memory tenant cache to avoid DB round-trips on every message
+user_tenants_cache: dict[int, str] = {}
 
 
 class Checkout(StatesGroup):
@@ -34,14 +38,39 @@ def _main_kb() -> ReplyKeyboardMarkup:
     )
 
 
-async def _load_menu() -> dict:
+async def _remember_tenant(user_id: int, slug: str):
+    user_tenants_cache[user_id] = slug
+    await asyncio.to_thread(set_user_tenant, user_id, slug)
+
+
+async def _get_tenant_slug(user_id: int) -> str | None:
+    if user_id in user_tenants_cache:
+        return user_tenants_cache[user_id]
+    tenant = await asyncio.to_thread(get_user_tenant, user_id)
+    if tenant and getattr(tenant, "slug", None):
+        user_tenants_cache[user_id] = tenant.slug
+        return tenant.slug
+    return None
+
+
+async def _require_tenant_slug(message: types.Message) -> str | None:
+    if not message.from_user:
+        return None
+    slug = await _get_tenant_slug(message.from_user.id)
+    if slug:
+        return slug
+    await message.answer("Avval /start <slug> yoki /tenant <slug> bilan filialni tanlang.")
+    return None
+
+
+async def _load_menu(slug: str) -> dict:
     base_url = (settings.API_BASE_URL or "").rstrip("/")
     if base_url.endswith("/api"):
         base_url = base_url[:-4]
     if not base_url:
         raise RuntimeError("API_BASE_URL is not configured")
     async with httpx.AsyncClient() as cx:
-        r = await cx.get(f"{base_url}/menu", timeout=10)
+        r = await cx.get(f"{base_url}/t/{slug}/menu", timeout=10)
         r.raise_for_status()
         return r.json()
 
@@ -80,7 +109,7 @@ def _cart_keyboard(cart: dict[str, int]) -> InlineKeyboardMarkup:
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=f"❌ {item_id} x{qty}",
+                    text=f"➖ {item_id} x{qty}",
                     callback_data=f"remove:{item_id}",
                 )
             ]
@@ -114,18 +143,43 @@ def _cart_text(cart: dict[str, int], items: dict[str, dict]) -> str:
 
 @router.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer(
-        "Salom! Menu / savat / tozalash uchun tugmalarni ishlating. Yozish faqat ma'lumot kiritishda kerak.",
-        reply_markup=_main_kb(),
-    )
+    slug = None
+    if message.text:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) == 2:
+            slug = parts[1].strip()
+    if message.from_user and slug:
+        await _remember_tenant(message.from_user.id, slug)
+        await message.answer(f"Tugallandi. Tanlangan filial: {slug}", reply_markup=_main_kb())
+    else:
+        await message.answer(
+            "Salom! Menu / savat / tozalash uchun tugmalarni ishlating. "
+            "Avval /start <slug> yoki /tenant <slug> bilan filialni tanlang.",
+            reply_markup=_main_kb(),
+        )
+
+
+@router.message(Command("tenant"))
+async def set_tenant(message: types.Message):
+    if not message.text or len(message.text.split()) != 2:
+        return await message.answer("Format: /tenant <slug>")
+    slug = message.text.split()[1]
+    if message.from_user:
+        await _remember_tenant(message.from_user.id, slug)
+    await message.answer(f"Tenant tanlandi: {slug}", reply_markup=_main_kb())
 
 
 @router.message(Command("menu"))
 @router.message(lambda m: m.text and m.text.lower() == "menu")
 async def show_menu(message: types.Message):
+    if not message.from_user:
+        return
+    slug = await _require_tenant_slug(message)
+    if not slug:
+        return
     try:
-        menu = await _load_menu()
-    except Exception as exc:
+        menu = await _load_menu(slug)
+    except Exception:
         await message.answer("Menyu vaqtincha mavjud emas. Keyinroq urinib ko'ring.")
         return
     lines = []
@@ -139,8 +193,13 @@ async def show_menu(message: types.Message):
 
 @router.callback_query(lambda c: c.data == "menu")
 async def menu_callback(callback: CallbackQuery):
+    if not callback.from_user:
+        return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
+    slug = await _get_tenant_slug(callback.from_user.id)
+    if not slug:
+        return await callback.answer("Avval /start <slug>", show_alert=True)
     try:
-        menu = await _load_menu()
+        menu = await _load_menu(slug)
     except Exception:
         await callback.answer("Menyu mavjud emas", show_alert=True)
         return
@@ -156,8 +215,10 @@ async def menu_callback(callback: CallbackQuery):
 
 @router.message(Command("add"))
 async def add_to_cart_manual(message: types.Message):
-    # Сохраняем поддержку ручного ввода, но основная логика через кнопки
     if not message.from_user:
+        return
+    slug = await _require_tenant_slug(message)
+    if not slug:
         return
     try:
         _, item_id, qty = message.text.split()
@@ -200,14 +261,17 @@ async def clear_cart_callback(callback: CallbackQuery):
 async def cart_checkout(message: types.Message, state: FSMContext):
     if not message.from_user:
         return await message.answer("Foydalanuvchini aniqlab bo'lmadi.")
+    slug = await _require_tenant_slug(message)
+    if not slug:
+        return
     user_id = message.from_user.id
     cart = _cart_for(user_id)
-    menu = await _load_menu()
+    menu = await _load_menu(slug)
     items = _item_map(menu)
     if not cart:
         return await message.answer("Savat bo'sh. Menu tugmasini bosing.", reply_markup=_main_kb())
 
-    await state.update_data(cart=cart)
+    await state.update_data(cart=cart, tenant_slug=slug)
     await message.answer(
         _cart_text(cart, items),
         reply_markup=_cart_keyboard(cart),
@@ -220,10 +284,13 @@ async def cart_checkout(message: types.Message, state: FSMContext):
 async def remove_item(callback: CallbackQuery):
     if not callback.from_user:
         return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
+    slug = await _get_tenant_slug(callback.from_user.id)
+    if not slug:
+        return await callback.answer("Avval /start <slug>", show_alert=True)
     item_id = callback.data.split(":", 1)[1]
     cart = _cart_for(callback.from_user.id)
     cart.pop(item_id, None)
-    menu = await _load_menu()
+    menu = await _load_menu(slug)
     items = _item_map(menu)
     text = _cart_text(cart, items)
     await callback.message.edit_text(text, reply_markup=_cart_keyboard(cart))
@@ -234,18 +301,23 @@ async def remove_item(callback: CallbackQuery):
 async def checkout_callback(callback: CallbackQuery, state: FSMContext):
     if not callback.from_user or not callback.message:
         return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
+    slug = await _get_tenant_slug(callback.from_user.id)
+    if not slug:
+        return await callback.answer("Avval /start <slug>", show_alert=True)
     user_id = callback.from_user.id
     cart = _cart_for(user_id)
-    menu = await _load_menu()
+    menu = await _load_menu(slug)
     items = _item_map(menu)
     if not cart:
         await callback.answer("Savat bo'sh", show_alert=True)
         return await callback.message.edit_text("Savat bo'sh. Menu tugmasini bosing.")
 
-    await state.update_data(cart=cart)
+    await state.update_data(cart=cart, tenant_slug=slug)
     await state.set_state(Checkout.name)
     await callback.message.edit_text(_cart_text(cart, items), reply_markup=_cart_keyboard(cart))
-    await bot.send_message(user_id, "Ismingizni yozing:", reply_markup=_main_kb())
+    bot = get_bot()
+    if bot:
+        await bot.send_message(user_id, "Ismingizni yozing:", reply_markup=_main_kb())
     await callback.answer()
 
 
@@ -279,7 +351,14 @@ async def finish_order(message: types.Message, state: FSMContext):
         await state.clear()
         return await message.answer("Savat bo'sh. Yangi buyurtma uchun Menu.", reply_markup=_main_kb())
 
-    menu = await _load_menu()
+    slug = data.get("tenant_slug")
+    if not slug and user_id:
+        slug = await _get_tenant_slug(user_id)
+    if not slug:
+        await state.clear()
+        return await message.answer("Filial tanlanmagan. /start <slug> ni yuboring.")
+
+    menu = await _load_menu(slug)
     items = _item_map(menu)
     comment = "-" if not message.text or message.text.strip() == "-" else message.text.strip()
 
@@ -293,12 +372,14 @@ async def finish_order(message: types.Message, state: FSMContext):
         },
         "source": "bot",
     }
+    base_url = (settings.API_BASE_URL or "").rstrip("/")
+    if base_url.endswith("/api"):
+        base_url = base_url[:-4]
     async with httpx.AsyncClient() as cx:
-        r = await cx.post(f"{settings.API_BASE_URL}/orders", json=payload, timeout=10)
+        r = await cx.post(f"{base_url}/t/{slug}/orders", json=payload, timeout=10)
         r.raise_for_status()
         order = r.json()
 
-    # Админ-уведомление с названиями
     try:
         total = 0
         item_lines = []
@@ -311,7 +392,7 @@ async def finish_order(message: types.Message, state: FSMContext):
             item_lines.append(f"- {name} x{qty} = {line_total} so'm")
         admin_text = "\n".join(
             [
-                f"Yangi buyurtma (bot) #{order.get('order_id')}",
+                f"Yangi buyurtma (bot) #{order.get('order_id')} [{slug}]",
                 *item_lines,
                 f"Jami: {total} so'm",
                 "",
@@ -321,7 +402,9 @@ async def finish_order(message: types.Message, state: FSMContext):
                 f"Izoh: {comment}",
             ]
         )
-        await bot.send_message(chat_id=settings.ADMIN_CHAT_ID, text=admin_text)
+        bot = get_bot()
+        if bot and settings.ADMIN_CHAT_ID:
+            await bot.send_message(chat_id=settings.ADMIN_CHAT_ID, text=admin_text)
     except Exception:
         pass
 
