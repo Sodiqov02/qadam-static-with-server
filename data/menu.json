@@ -8,13 +8,15 @@
           "id": "pepperoni",
           "name": "Pepperoni",
           "price": 65000,
-          "description": "Mol go'shti kolbasasi, mozzarella va tomat sousi."
+          "description": "Mol go'shti kolbasasi, mozzarella va tomat sousi.",
+          "image_url": "https://images.unsplash.com/photo-_P76trHTWDE?auto=format&fit=crop&w=800&q=80"
         },
         {
           "id": "margarita",
           "name": "Margarita",
           "price": 50000,
-          "description": "Pomidor sousi, mozzarella va reyhan."
+          "description": "Pomidor sousi, mozzarella va reyhan.",
+          "image_url": "https://images.unsplash.com/photo-x00CzBt4Dfk?auto=format&fit=crop&w=800&q=80"
         }
       ]
     },
@@ -26,13 +28,15 @@
           "id": "cheeseburger",
           "name": "Cheeseburger",
           "price": 45000,
-          "description": "Mol go'shti kotlet, cheddar va maxsus sous."
+          "description": "Mol go'shti kotlet, cheddar va maxsus sous.",
+          "image_url": "https://images.unsplash.com/photo-jh5XyK4Rr3Y?auto=format&fit=crop&w=800&q=80"
         },
         {
           "id": "shawarma",
           "name": "Shawarma",
           "price": 38000,
-          "description": "Tovuqli shawarma yangi sabzavot va sous bilan."
+          "description": "Tovuqli shawarma yangi sabzavot va sous bilan.",
+          "image_url": "https://images.unsplash.com/photo-W2SA9Pcq08Q?auto=format&fit=crop&w=800&q=80"
         }
       ]
     },
@@ -44,7 +48,8 @@
           "id": "cola-1l",
           "name": "Cola 1L",
           "price": 12000,
-          "description": "Muzdek Coca-Cola 1 litr."
+          "description": "Muzdek Coca-Cola 1 litr.",
+          "image_url": "https://images.unsplash.com/photo-ScK3g3ID1Dg?auto=format&fit=crop&w=800&q=80"
         }
       ]
     }

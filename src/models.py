@@ -5,6 +5,7 @@ class MenuItem(BaseModel):
     id: str
     name: str
     price: int
+    image_url: Optional[str] = None
 
 class MenuCategory(BaseModel):
     id: str

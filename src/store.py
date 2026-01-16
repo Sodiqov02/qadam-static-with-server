@@ -29,6 +29,32 @@ def _menu_fallback() -> dict:
         return {}
 
 
+def _demo_image_map() -> Dict[str, str]:
+    demo_menu = _menu_fallback()
+    mapping: Dict[str, str] = {}
+    for cat in demo_menu.get("categories", []):
+        for it in cat.get("items", []):
+            name = (it.get("name") or it.get("title") or "").strip().lower()
+            image_url = (it.get("image_url") or "").strip()
+            if name and image_url and name not in mapping:
+                mapping[name] = image_url
+    return mapping
+
+
+def _attach_demo_images(menu: dict) -> dict:
+    image_map = _demo_image_map()
+    if not image_map:
+        return menu
+    for cat in menu.get("categories", []):
+        for it in cat.get("items", []):
+            if it.get("image_url"):
+                continue
+            name = (it.get("name") or "").strip().lower()
+            if name and name in image_map:
+                it["image_url"] = image_map[name]
+    return menu
+
+
 def seed_demo_menu(tenant: Tenant) -> bool:
     demo_menu = _menu_fallback()
     categories = demo_menu.get("categories") or []
@@ -167,10 +193,13 @@ def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
 def get_menu_for_tenant(tenant: Tenant) -> dict:
     menu_from_db = _menu_from_db(tenant.id)
     if menu_from_db:
-        return {"categories": menu_from_db}
+        menu = {"categories": menu_from_db}
+        if tenant.slug == DEFAULT_TENANT_SLUG:
+            return _attach_demo_images(menu)
+        return menu
     # fallback for default tenant only
     if tenant.slug == DEFAULT_TENANT_SLUG:
-        return _menu_fallback()
+        return _attach_demo_images(_menu_fallback())
     return {"categories": []}
 
 
