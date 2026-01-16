@@ -121,10 +121,18 @@
             card.appendChild(badge);
           }
 
-          const img = document.createElement("div");
-          img.className = "img-placeholder";
-          safeText(img, item.name || "");
-          card.appendChild(img);
+          if (item.image_url) {
+            const img = document.createElement("img");
+            img.src = item.image_url;
+            img.alt = item.name || "";
+            img.loading = "lazy";
+            card.appendChild(img);
+          } else {
+            const img = document.createElement("div");
+            img.className = "img-placeholder";
+            safeText(img, item.name || "");
+            card.appendChild(img);
+          }
 
           const title = document.createElement("h4");
           safeText(title, item.name);

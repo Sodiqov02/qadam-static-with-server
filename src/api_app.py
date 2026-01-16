@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 INDEX_FILE = WEB_DIR / "index.html"
 STYLE_FILE = WEB_DIR / "style.css"
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 
-if WEB_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 class ReservationIn(BaseModel):
