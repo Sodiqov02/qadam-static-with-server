@@ -88,13 +88,13 @@ def _menu_keyboard(menu: dict) -> InlineKeyboardMarkup:
     buttons = []
     for cat in menu.get("categories", []):
         for it in cat.get("items", []):
-            text = f"{it.get('name')} — {it.get('price')} so'm"
+            text = f"{it.get('name')} - {it.get('price')} so'm"
             buttons.append([InlineKeyboardButton(text=text[:64], callback_data=f"add:{it.get('id')}")])
     buttons.append(
         [
             InlineKeyboardButton(text="Savat", callback_data="cart"),
             InlineKeyboardButton(text="Tozalash", callback_data="clear"),
-            InlineKeyboardButton(text="Checkout", callback_data="checkout"),
+            InlineKeyboardButton(text="Buyurtma berish", callback_data="checkout"),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -106,7 +106,7 @@ def _cart_keyboard(cart: dict[str, int]) -> InlineKeyboardMarkup:
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=f"➖ {item_id} x{qty}",
+                    text=f"- {item_id} x{qty}",
                     callback_data=f"remove:{item_id}",
                 )
             ]
@@ -114,7 +114,7 @@ def _cart_keyboard(cart: dict[str, int]) -> InlineKeyboardMarkup:
     buttons.append(
         [
             InlineKeyboardButton(text="Menu", callback_data="menu"),
-            InlineKeyboardButton(text="Checkout", callback_data="checkout"),
+            InlineKeyboardButton(text="Buyurtma berish", callback_data="checkout"),
             InlineKeyboardButton(text="Tozalash", callback_data="clear"),
         ]
     )
@@ -134,7 +134,7 @@ def _cart_text(cart: dict[str, int], items: dict[str, dict]) -> str:
         total += line_total
         lines.append(f"- {name} x{qty} = {line_total} so'm")
     lines.append(f"\nJami: {total} so'm")
-    lines.append("\nCheckout tugmasini bosing.")
+    lines.append("\nBuyurtma berish tugmasini bosing.")
     return "\n".join(lines)
 
 
@@ -184,7 +184,7 @@ async def show_menu(message: types.Message):
     for cat in menu.get("categories", []):
         lines.append(f"[{cat.get('title','')}]")
         for it in cat.get("items", []):
-            lines.append(f"- {it.get('name')} — {it.get('price')} so'm (id: {it.get('id')})")
+            lines.append(f"- {it.get('name')} - {it.get('price')} so'm (id: {it.get('id')})")
         lines.append("")
     await message.answer("\n".join(lines), reply_markup=_menu_keyboard(menu))
 
@@ -205,7 +205,7 @@ async def menu_callback(callback: CallbackQuery):
     for cat in menu.get("categories", []):
         text_lines.append(f"[{cat.get('title','')}]")
         for it in cat.get("items", []):
-            text_lines.append(f"- {it.get('name')} — {it.get('price')} so'm (id: {it.get('id')})")
+            text_lines.append(f"- {it.get('name')} - {it.get('price')} so'm (id: {it.get('id')})")
         text_lines.append("")
     await callback.message.edit_text("\n".join(text_lines), reply_markup=_menu_keyboard(menu))
     await callback.answer()
@@ -225,7 +225,7 @@ async def add_to_cart_manual(message: types.Message):
         return await message.answer("Format: /add item_id qty")
     cart = _cart_for(message.from_user.id)
     cart[item_id] = cart.get(item_id, 0) + qty
-    await message.answer(f"Qo'shildi: {item_id} x{qty}\n/cart — savatni ko'rish", reply_markup=_main_kb())
+    await message.answer(f"Qo'shildi: {item_id} x{qty}\n/cart - savatni ko'rish", reply_markup=_main_kb())
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("add:"))
@@ -322,14 +322,14 @@ async def checkout_callback(callback: CallbackQuery, state: FSMContext):
 @router.message(Checkout.name)
 async def get_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text or "")
-    await message.answer("Telefon raqamingiz?")
+    await message.answer("Telefon raqamingiz-")
     await state.set_state(Checkout.phone)
 
 
 @router.message(Checkout.phone)
 async def get_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.text or "")
-    await message.answer("Manzil?")
+    await message.answer("Manzil-")
     await state.set_state(Checkout.address)
 
 
