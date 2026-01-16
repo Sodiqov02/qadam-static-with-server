@@ -33,7 +33,7 @@ class Checkout(StatesGroup):
 
 def _main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Menu"), KeyboardButton(text="Savat")], [KeyboardButton(text="Tozalash")]],
+        keyboard=[[KeyboardButton(text="Menyu"), KeyboardButton(text="Savat")], [KeyboardButton(text="Tozalash")]],
         resize_keyboard=True,
     )
 
@@ -113,7 +113,7 @@ def _cart_keyboard(cart: dict[str, int]) -> InlineKeyboardMarkup:
         )
     buttons.append(
         [
-            InlineKeyboardButton(text="Menu", callback_data="menu"),
+            InlineKeyboardButton(text="Menyu", callback_data="menu"),
             InlineKeyboardButton(text="Buyurtma berish", callback_data="checkout"),
             InlineKeyboardButton(text="Tozalash", callback_data="clear"),
         ]
@@ -152,7 +152,7 @@ async def start(message: types.Message):
     else:
         await message.answer(
             f"Salom! Demo menyu yoqildi: {DEFAULT_TENANT_SLUG}. "
-            "Menu / savat / tozalash uchun tugmalarni ishlating.",
+            "Menyu / savat / tozalash uchun tugmalarni ishlating.",
             reply_markup=_main_kb(),
         )
 
@@ -168,7 +168,7 @@ async def set_tenant(message: types.Message):
 
 
 @router.message(Command("menu"))
-@router.message(lambda m: m.text and m.text.lower() == "menu")
+@router.message(lambda m: m.text and m.text.lower() in {"menu", "menyu"})
 async def show_menu(message: types.Message):
     if not message.from_user:
         return
@@ -208,6 +208,28 @@ async def menu_callback(callback: CallbackQuery):
             text_lines.append(f"- {it.get('name')} - {it.get('price')} so'm (id: {it.get('id')})")
         text_lines.append("")
     await callback.message.edit_text("\n".join(text_lines), reply_markup=_menu_keyboard(menu))
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == "cart")
+async def cart_callback(callback: CallbackQuery, state: FSMContext):
+    if not callback.from_user or not callback.message:
+        return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
+    slug = await _get_tenant_slug(callback.from_user.id)
+    if not slug:
+        return await callback.answer("Avval /start <slug>", show_alert=True)
+    user_id = callback.from_user.id
+    cart = _cart_for(user_id)
+    try:
+        menu = await _load_menu(slug)
+    except Exception:
+        return await callback.answer("Menyu mavjud emas", show_alert=True)
+    items = _item_map(menu)
+    if not cart:
+        await callback.answer("Savat bo'sh", show_alert=True)
+        return await callback.message.edit_text("Savat bo'sh. Menyu tugmasini bosing.")
+    await state.update_data(cart=cart, tenant_slug=slug)
+    await callback.message.edit_text(_cart_text(cart, items), reply_markup=_cart_keyboard(cart))
     await callback.answer()
 
 
@@ -267,7 +289,7 @@ async def cart_checkout(message: types.Message, state: FSMContext):
     menu = await _load_menu(slug)
     items = _item_map(menu)
     if not cart:
-        return await message.answer("Savat bo'sh. Menu tugmasini bosing.", reply_markup=_main_kb())
+        return await message.answer("Savat bo'sh. Menyu tugmasini bosing.", reply_markup=_main_kb())
 
     await state.update_data(cart=cart, tenant_slug=slug)
     await message.answer(
@@ -308,7 +330,7 @@ async def checkout_callback(callback: CallbackQuery, state: FSMContext):
     items = _item_map(menu)
     if not cart:
         await callback.answer("Savat bo'sh", show_alert=True)
-        return await callback.message.edit_text("Savat bo'sh. Menu tugmasini bosing.")
+        return await callback.message.edit_text("Savat bo'sh. Menyu tugmasini bosing.")
 
     await state.update_data(cart=cart, tenant_slug=slug)
     await state.set_state(Checkout.name)
@@ -347,7 +369,7 @@ async def finish_order(message: types.Message, state: FSMContext):
     cart = user_carts.get(user_id, {}) if user_id else data.get("cart", {})
     if not cart:
         await state.clear()
-        return await message.answer("Savat bo'sh. Yangi buyurtma uchun Menu.", reply_markup=_main_kb())
+        return await message.answer("Savat bo'sh. Yangi buyurtma uchun Menyu.", reply_markup=_main_kb())
 
     slug = data.get("tenant_slug")
     if not slug and user_id:
