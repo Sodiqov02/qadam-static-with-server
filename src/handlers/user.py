@@ -524,8 +524,22 @@ async def finish_order(message: types.Message, state: FSMContext):
         user_carts.pop(user_id, None)
     await state.clear()
     await _clear_bot_messages(message.from_user.id)
-    sent = await message.answer(
-        f"Rahmat! Buyurtma #{order['order_id']} qabul qilindi.", reply_markup=_main_kb()
+    user_total = 0
+    user_lines = []
+    for item_id, qty in cart.items():
+        meta = items.get(item_id, {})
+        name = meta.get("name", item_id)
+        price = int(meta.get("price") or 0)
+        line_total = price * qty if price else qty
+        user_total += line_total
+        user_lines.append(f"- {name} x{qty} = {line_total} so'm")
+    user_text = "\n".join(
+        [
+            f"Buyurtma #{order['order_id']} qabul qilindi.",
+            *user_lines,
+            f"Jami: {user_total} so'm",
+        ]
     )
+    sent = await message.answer(user_text, reply_markup=_main_kb())
     _remember_bot_message(message.from_user.id, sent.message_id, order_history=True)
     await _safe_delete_message(message)
