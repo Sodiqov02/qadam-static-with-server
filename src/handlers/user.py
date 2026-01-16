@@ -38,6 +38,15 @@ def _main_kb() -> ReplyKeyboardMarkup:
     )
 
 
+async def _safe_delete_message(message: types.Message | None) -> None:
+    if not message:
+        return
+    try:
+        await message.delete()
+    except Exception:
+        return
+
+
 async def _remember_tenant(user_id: int, slug: str):
     user_tenants_cache[user_id] = slug
     await asyncio.to_thread(set_user_tenant, user_id, slug)
@@ -155,16 +164,20 @@ async def start(message: types.Message):
             "Menyu / savat / tozalash uchun tugmalarni ishlating.",
             reply_markup=_main_kb(),
         )
+    await _safe_delete_message(message)
 
 
 @router.message(Command("tenant"))
 async def set_tenant(message: types.Message):
     if not message.text or len(message.text.split()) != 2:
-        return await message.answer("Format: /tenant <slug>")
+        await message.answer("Format: /tenant <slug>")
+        await _safe_delete_message(message)
+        return
     slug = message.text.split()[1]
     if message.from_user:
         await _remember_tenant(message.from_user.id, slug)
     await message.answer(f"Tenant tanlandi: {slug}", reply_markup=_main_kb())
+    await _safe_delete_message(message)
 
 
 @router.message(Command("menu"))
@@ -179,6 +192,7 @@ async def show_menu(message: types.Message):
         menu = await _load_menu(slug)
     except Exception:
         await message.answer("Menyu vaqtincha mavjud emas. Keyinroq urinib ko'ring.")
+        await _safe_delete_message(message)
         return
     lines = []
     for cat in menu.get("categories", []):
@@ -187,6 +201,7 @@ async def show_menu(message: types.Message):
             lines.append(f"- {it.get('name')} - {it.get('price')} so'm (id: {it.get('id')})")
         lines.append("")
     await message.answer("\n".join(lines), reply_markup=_menu_keyboard(menu))
+    await _safe_delete_message(message)
 
 
 @router.callback_query(lambda c: c.data == "menu")
@@ -244,10 +259,13 @@ async def add_to_cart_manual(message: types.Message):
         _, item_id, qty = message.text.split()
         qty = int(qty)
     except Exception:
-        return await message.answer("Format: /add item_id qty")
+        await message.answer("Format: /add item_id qty")
+        await _safe_delete_message(message)
+        return
     cart = _cart_for(message.from_user.id)
     cart[item_id] = cart.get(item_id, 0) + qty
     await message.answer(f"Qo'shildi: {item_id} x{qty}\n/cart - savatni ko'rish", reply_markup=_main_kb())
+    await _safe_delete_message(message)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("add:"))
@@ -266,6 +284,7 @@ async def clear_cart_cmd(message: types.Message):
     if message.from_user:
         user_carts.pop(message.from_user.id, None)
     await message.answer("Savat tozalandi.", reply_markup=_main_kb())
+    await _safe_delete_message(message)
 
 
 @router.callback_query(lambda c: c.data == "clear")
@@ -289,7 +308,9 @@ async def cart_checkout(message: types.Message, state: FSMContext):
     menu = await _load_menu(slug)
     items = _item_map(menu)
     if not cart:
-        return await message.answer("Savat bo'sh. Menyu tugmasini bosing.", reply_markup=_main_kb())
+        await message.answer("Savat bo'sh. Menyu tugmasini bosing.", reply_markup=_main_kb())
+        await _safe_delete_message(message)
+        return
 
     await state.update_data(cart=cart, tenant_slug=slug)
     await message.answer(
@@ -298,6 +319,7 @@ async def cart_checkout(message: types.Message, state: FSMContext):
     )
     await state.set_state(Checkout.name)
     await message.answer("Ismingizni yozing:", reply_markup=_main_kb())
+    await _safe_delete_message(message)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("remove:"))
@@ -346,6 +368,7 @@ async def get_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text or "")
     await message.answer("Telefon raqamingiz-")
     await state.set_state(Checkout.phone)
+    await _safe_delete_message(message)
 
 
 @router.message(Checkout.phone)
@@ -353,6 +376,7 @@ async def get_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.text or "")
     await message.answer("Manzil-")
     await state.set_state(Checkout.address)
+    await _safe_delete_message(message)
 
 
 @router.message(Checkout.address)
@@ -360,6 +384,7 @@ async def get_address(message: types.Message, state: FSMContext):
     await state.update_data(address=message.text or "")
     await message.answer("Izoh (yo'q bo'lsa - '-' yuboring):")
     await state.set_state(Checkout.comment)
+    await _safe_delete_message(message)
 
 
 @router.message(Checkout.comment)
@@ -369,14 +394,18 @@ async def finish_order(message: types.Message, state: FSMContext):
     cart = user_carts.get(user_id, {}) if user_id else data.get("cart", {})
     if not cart:
         await state.clear()
-        return await message.answer("Savat bo'sh. Yangi buyurtma uchun Menyu.", reply_markup=_main_kb())
+        await message.answer("Savat bo'sh. Yangi buyurtma uchun Menyu.", reply_markup=_main_kb())
+        await _safe_delete_message(message)
+        return
 
     slug = data.get("tenant_slug")
     if not slug and user_id:
         slug = await _get_tenant_slug(user_id)
     if not slug:
         await state.clear()
-        return await message.answer("Filial tanlanmagan. /start <slug> ni yuboring.")
+        await message.answer("Filial tanlanmagan. /start <slug> ni yuboring.")
+        await _safe_delete_message(message)
+        return
 
     menu = await _load_menu(slug)
     items = _item_map(menu)
@@ -434,3 +463,4 @@ async def finish_order(message: types.Message, state: FSMContext):
     await message.answer(
         f"Rahmat! Buyurtma #{order['order_id']} qabul qilindi.", reply_markup=_main_kb()
     )
+    await _safe_delete_message(message)
