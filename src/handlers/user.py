@@ -22,6 +22,11 @@ router = Router()
 user_carts: dict[int, dict[str, int]] = {}
 # In-memory tenant cache to avoid DB round-trips on every message
 user_tenants_cache: dict[int, str] = {}
+# In-memory bot message history per user (to delete prompts)
+user_bot_messages: dict[int, list[int]] = {}
+# Keep last N order confirmations per user
+user_order_messages: dict[int, list[int]] = {}
+MAX_ORDER_HISTORY = 5
 
 
 class Checkout(StatesGroup):
@@ -45,6 +50,31 @@ async def _safe_delete_message(message: types.Message | None) -> None:
         await message.delete()
     except Exception:
         return
+
+
+def _remember_bot_message(user_id: int, message_id: int, *, order_history: bool = False) -> None:
+    if order_history:
+        items = user_order_messages.setdefault(user_id, [])
+        items.append(message_id)
+        if len(items) > MAX_ORDER_HISTORY:
+            items.pop(0)
+        return
+    items = user_bot_messages.setdefault(user_id, [])
+    items.append(message_id)
+
+
+async def _clear_bot_messages(user_id: int) -> None:
+    items = user_bot_messages.pop(user_id, [])
+    if not items:
+        return
+    bot = get_bot()
+    if not bot:
+        return
+    for mid in items:
+        try:
+            await bot.delete_message(chat_id=user_id, message_id=mid)
+        except Exception:
+            continue
 
 
 async def _remember_tenant(user_id: int, slug: str):
@@ -157,26 +187,34 @@ async def start(message: types.Message):
     if message.from_user:
         await _remember_tenant(message.from_user.id, slug or DEFAULT_TENANT_SLUG)
     if slug:
-        await message.answer(f"Tugallandi. Tanlangan filial: {slug}", reply_markup=_main_kb())
+        await _clear_bot_messages(message.from_user.id)
+        sent = await message.answer(f"Tugallandi. Tanlangan filial: {slug}", reply_markup=_main_kb())
     else:
-        await message.answer(
+        await _clear_bot_messages(message.from_user.id)
+        sent = await message.answer(
             f"Salom! Demo menyu yoqildi: {DEFAULT_TENANT_SLUG}. "
             "Menyu / savat / tozalash uchun tugmalarni ishlating.",
             reply_markup=_main_kb(),
         )
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await _safe_delete_message(message)
 
 
 @router.message(Command("tenant"))
 async def set_tenant(message: types.Message):
     if not message.text or len(message.text.split()) != 2:
-        await message.answer("Format: /tenant <slug>")
+        sent = await message.answer("Format: /tenant <slug>")
+        if message.from_user:
+            await _clear_bot_messages(message.from_user.id)
+            _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
         return
     slug = message.text.split()[1]
     if message.from_user:
         await _remember_tenant(message.from_user.id, slug)
-    await message.answer(f"Tenant tanlandi: {slug}", reply_markup=_main_kb())
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer(f"Tenant tanlandi: {slug}", reply_markup=_main_kb())
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await _safe_delete_message(message)
 
 
@@ -191,7 +229,9 @@ async def show_menu(message: types.Message):
     try:
         menu = await _load_menu(slug)
     except Exception:
-        await message.answer("Menyu vaqtincha mavjud emas. Keyinroq urinib ko'ring.")
+        sent = await message.answer("Menyu vaqtincha mavjud emas. Keyinroq urinib ko'ring.")
+        await _clear_bot_messages(message.from_user.id)
+        _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
         return
     lines = []
@@ -200,7 +240,9 @@ async def show_menu(message: types.Message):
         for it in cat.get("items", []):
             lines.append(f"- {it.get('name')} - {it.get('price')} so'm (id: {it.get('id')})")
         lines.append("")
-    await message.answer("\n".join(lines), reply_markup=_menu_keyboard(menu))
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer("\n".join(lines), reply_markup=_menu_keyboard(menu))
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await _safe_delete_message(message)
 
 
@@ -259,12 +301,16 @@ async def add_to_cart_manual(message: types.Message):
         _, item_id, qty = message.text.split()
         qty = int(qty)
     except Exception:
-        await message.answer("Format: /add item_id qty")
+        sent = await message.answer("Format: /add item_id qty")
+        await _clear_bot_messages(message.from_user.id)
+        _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
         return
     cart = _cart_for(message.from_user.id)
     cart[item_id] = cart.get(item_id, 0) + qty
-    await message.answer(f"Qo'shildi: {item_id} x{qty}\n/cart - savatni ko'rish", reply_markup=_main_kb())
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer(f"Qo'shildi: {item_id} x{qty}\n/cart - savatni ko'rish", reply_markup=_main_kb())
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await _safe_delete_message(message)
 
 
@@ -283,7 +329,9 @@ async def add_to_cart(callback: CallbackQuery):
 async def clear_cart_cmd(message: types.Message):
     if message.from_user:
         user_carts.pop(message.from_user.id, None)
-    await message.answer("Savat tozalandi.", reply_markup=_main_kb())
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer("Savat tozalandi.", reply_markup=_main_kb())
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await _safe_delete_message(message)
 
 
@@ -308,17 +356,22 @@ async def cart_checkout(message: types.Message, state: FSMContext):
     menu = await _load_menu(slug)
     items = _item_map(menu)
     if not cart:
-        await message.answer("Savat bo'sh. Menyu tugmasini bosing.", reply_markup=_main_kb())
+        await _clear_bot_messages(message.from_user.id)
+        sent = await message.answer("Savat bo'sh. Menyu tugmasini bosing.", reply_markup=_main_kb())
+        _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
         return
 
     await state.update_data(cart=cart, tenant_slug=slug)
-    await message.answer(
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer(
         _cart_text(cart, items),
         reply_markup=_cart_keyboard(cart),
     )
     await state.set_state(Checkout.name)
-    await message.answer("Ismingizni yozing:", reply_markup=_main_kb())
+    _remember_bot_message(message.from_user.id, sent.message_id)
+    sent = await message.answer("Ismingizni yozing:", reply_markup=_main_kb())
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await _safe_delete_message(message)
 
 
@@ -366,7 +419,9 @@ async def checkout_callback(callback: CallbackQuery, state: FSMContext):
 @router.message(Checkout.name)
 async def get_name(message: types.Message, state: FSMContext):
     await state.update_data(name=message.text or "")
-    await message.answer("Telefon raqamingiz-")
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer("Telefon raqamingiz-")
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await state.set_state(Checkout.phone)
     await _safe_delete_message(message)
 
@@ -374,7 +429,9 @@ async def get_name(message: types.Message, state: FSMContext):
 @router.message(Checkout.phone)
 async def get_phone(message: types.Message, state: FSMContext):
     await state.update_data(phone=message.text or "")
-    await message.answer("Manzil-")
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer("Manzil-")
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await state.set_state(Checkout.address)
     await _safe_delete_message(message)
 
@@ -382,7 +439,9 @@ async def get_phone(message: types.Message, state: FSMContext):
 @router.message(Checkout.address)
 async def get_address(message: types.Message, state: FSMContext):
     await state.update_data(address=message.text or "")
-    await message.answer("Izoh (yo'q bo'lsa - '-' yuboring):")
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer("Izoh (yo'q bo'lsa - '-' yuboring):")
+    _remember_bot_message(message.from_user.id, sent.message_id)
     await state.set_state(Checkout.comment)
     await _safe_delete_message(message)
 
@@ -394,7 +453,9 @@ async def finish_order(message: types.Message, state: FSMContext):
     cart = user_carts.get(user_id, {}) if user_id else data.get("cart", {})
     if not cart:
         await state.clear()
-        await message.answer("Savat bo'sh. Yangi buyurtma uchun Menyu.", reply_markup=_main_kb())
+        await _clear_bot_messages(message.from_user.id)
+        sent = await message.answer("Savat bo'sh. Yangi buyurtma uchun Menyu.", reply_markup=_main_kb())
+        _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
         return
 
@@ -403,7 +464,9 @@ async def finish_order(message: types.Message, state: FSMContext):
         slug = await _get_tenant_slug(user_id)
     if not slug:
         await state.clear()
-        await message.answer("Filial tanlanmagan. /start <slug> ni yuboring.")
+        await _clear_bot_messages(message.from_user.id)
+        sent = await message.answer("Filial tanlanmagan. /start <slug> ni yuboring.")
+        _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
         return
 
@@ -460,7 +523,9 @@ async def finish_order(message: types.Message, state: FSMContext):
     if user_id:
         user_carts.pop(user_id, None)
     await state.clear()
-    await message.answer(
+    await _clear_bot_messages(message.from_user.id)
+    sent = await message.answer(
         f"Rahmat! Buyurtma #{order['order_id']} qabul qilindi.", reply_markup=_main_kb()
     )
+    _remember_bot_message(message.from_user.id, sent.message_id, order_history=True)
     await _safe_delete_message(message)
