@@ -46,6 +46,15 @@ def _price_lookup(order: dict) -> dict:
     return mapping
 
 
+def _resolve_admin_chat_id(tenant: Tenant | None) -> int | None:
+    chat_id = _tget(tenant, "admin_chat_id")
+    if chat_id:
+        return int(chat_id)
+    if settings.ADMIN_CHAT_ID:
+        return int(settings.ADMIN_CHAT_ID)
+    return None
+
+
 async def notify_admin(order_id: int):
     """Send a short order notification to the admin chat for the order's tenant."""
     order = get_order(order_id)
@@ -87,13 +96,13 @@ async def notify_admin(order_id: int):
             f"Source: {order['source']}",
         ]
     )
-    chat_id = _tget(tenant, "admin_chat_id")
+    chat_id = _resolve_admin_chat_id(tenant)
     if chat_id:
         await _safe_send(int(chat_id), text)
 
 
 async def notify_reservation_created(tenant: Tenant, rid: int):
-    chat_id = _tget(tenant, "admin_chat_id")
+    chat_id = _resolve_admin_chat_id(tenant)
     if not chat_id:
         return
 
@@ -117,7 +126,7 @@ async def notify_reservation_created(tenant: Tenant, rid: int):
 
 
 async def notify_reservation_updated(tenant: Tenant, rid: int):
-    chat_id = _tget(tenant, "admin_chat_id")
+    chat_id = _resolve_admin_chat_id(tenant)
     if not chat_id:
         return
 

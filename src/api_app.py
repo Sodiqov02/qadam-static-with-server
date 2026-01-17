@@ -5,9 +5,11 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy import func, select
 
 from src.models import Menu, OrderIn, OrderOut
-from src.db import init_db
+from src.db import get_session, init_db
+from src.db_models import Tenant
 from src.notifier import notify_admin  # asynchronous notifier
 from src.notifier import notify_reservation_created, notify_reservation_updated
 from src.store import (
@@ -73,6 +75,12 @@ def ensure_default():
         ensure_default_tenant()
     except Exception:
         logger.exception("ensure_default_tenant failed during startup")
+    try:
+        with get_session() as session:
+            count = session.execute(select(func.count(Tenant.id))).scalar_one()
+        logger.info("tenant_count=%s", count)
+    except Exception:
+        logger.exception("tenant_count check failed during startup")
 
 
 @app.get("/", include_in_schema=False)
@@ -91,6 +99,7 @@ def serve_style():
 
 @app.get("/menu", response_model=Menu)
 def get_menu(default_tenant=Depends(_default_tenant_dep)):
+    logger.info("menu_request slug=%s", getattr(default_tenant, "slug", DEFAULT_TENANT_SLUG))
     menu = get_menu_for_tenant(default_tenant)
     return Menu.model_validate(menu)
 
@@ -107,6 +116,7 @@ async def create_order(order: OrderIn, default_tenant=Depends(_default_tenant_de
 
 @app.get("/t/{slug}/menu", response_model=Menu)
 def get_menu_by_slug(slug: str, tenant=Depends(_tenant_dep)):
+    logger.info("menu_request slug=%s", slug)
     menu = get_menu_for_tenant(tenant)
     return Menu.model_validate(menu)
 

@@ -14,7 +14,7 @@ from aiogram.types import (
 
 from src.bot_init import get_bot
 from src.config import settings
-from src.store import DEFAULT_TENANT_SLUG, get_user_tenant, set_user_tenant
+from src.store import DEFAULT_TENANT_SLUG, get_tenant_by_slug, get_user_tenant, set_user_tenant
 
 router = Router()
 
@@ -515,8 +515,10 @@ async def finish_order(message: types.Message, state: FSMContext):
             ]
         )
         bot = get_bot()
-        if bot and settings.ADMIN_CHAT_ID:
-            await bot.send_message(chat_id=settings.ADMIN_CHAT_ID, text=admin_text)
+        tenant = await asyncio.to_thread(get_tenant_by_slug, slug)
+        admin_chat_id = getattr(tenant, "admin_chat_id", None) or settings.ADMIN_CHAT_ID
+        if bot and admin_chat_id:
+            await bot.send_message(chat_id=int(admin_chat_id), text=admin_text)
     except Exception:
         pass
 

@@ -1,0 +1,34 @@
+{
+  "categories": [
+    {
+      "id": "ramen",
+      "title": "Ramen",
+      "items": [
+        {
+          "id": "spicy_miso",
+          "name": "Spicy Miso",
+          "price": 42000,
+          "description": "Miso bulyon, chashu va ko'katlar."
+        },
+        {
+          "id": "shoyu",
+          "name": "Shoyu",
+          "price": 38000,
+          "description": "Soya sousli klassik ramen."
+        }
+      ]
+    },
+    {
+      "id": "dessert",
+      "title": "Desertlar",
+      "items": [
+        {
+          "id": "cheesecake",
+          "name": "Cheesecake",
+          "price": 25000,
+          "description": "Yengil va mayin."
+        }
+      ]
+    }
+  ]
+}
