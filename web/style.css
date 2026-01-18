@@ -107,6 +107,57 @@ body {
   gap: 12px;
   margin-bottom: 12px;
 }
+.hero {
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+  min-height: 220px;
+  margin-bottom: 18px;
+  border: 1px solid var(--stroke);
+}
+.hero-media {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+.hero-media.hero-fallback {
+  background: linear-gradient(135deg, #111827, #1f2937);
+}
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+}
+.hero-content {
+  position: relative;
+  z-index: 1;
+  color: #f9fafb;
+  padding: 18px 20px;
+  max-width: 520px;
+}
+.hero-eyebrow {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: rgba(248, 250, 252, 0.8);
+}
+.hero-content h3 {
+  margin: 0 0 8px;
+  font-size: 26px;
+}
+.hero-desc {
+  margin: 0 0 12px;
+  color: rgba(248, 250, 252, 0.85);
+  line-height: 1.5;
+}
+.hero-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #f9fafb;
+}
 .eyebrow { margin: 0; color: var(--muted); font-size: 13px; }
 .content h2 { margin: 0; font-size: 24px; }
 .lang-switch { display: inline-flex; gap: 6px; }
@@ -242,4 +293,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow
 }
 @media (max-width: 768px) {
   .menu-item-image { height: 150px; }
+  .hero { min-height: 170px; }
+  .hero-content { padding: 14px 16px; }
+  .hero-content h3 { font-size: 22px; }
 }

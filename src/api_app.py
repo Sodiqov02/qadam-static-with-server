@@ -47,6 +47,19 @@ class ReservationUpdate(BaseModel):
     status: str
 
 
+class TenantPublic(BaseModel):
+    name: str
+    description: str | None = None
+    hero_image: str | None = None
+
+
+def _tenant_public(tenant):
+    features = getattr(tenant, "features", {}) or {}
+    description = features.get("description") if isinstance(features.get("description"), str) else None
+    hero_image = features.get("hero_image") if isinstance(features.get("hero_image"), str) else None
+    return TenantPublic(name=tenant.name, description=description, hero_image=hero_image)
+
+
 def _default_tenant_dep():
     tenant = get_tenant_by_slug(DEFAULT_TENANT_SLUG)
     if not tenant:
@@ -104,6 +117,11 @@ def get_menu(default_tenant=Depends(_default_tenant_dep)):
     return Menu.model_validate(menu)
 
 
+@app.get("/tenant", response_model=TenantPublic)
+def get_default_tenant(default_tenant=Depends(_default_tenant_dep)):
+    return _tenant_public(default_tenant)
+
+
 @app.post("/orders", response_model=OrderOut)
 async def create_order(order: OrderIn, default_tenant=Depends(_default_tenant_dep)):
     oid = add_order(order.model_dump(), tenant=default_tenant)
@@ -119,6 +137,11 @@ def get_menu_by_slug(slug: str, tenant=Depends(_tenant_dep)):
     logger.info("menu_request slug=%s", slug)
     menu = get_menu_for_tenant(tenant)
     return Menu.model_validate(menu)
+
+
+@app.get("/t/{slug}/tenant", response_model=TenantPublic)
+def get_tenant_by_slug_public(slug: str, tenant=Depends(_tenant_dep)):
+    return _tenant_public(tenant)
 
 
 @app.post("/t/{slug}/orders", response_model=OrderOut)
