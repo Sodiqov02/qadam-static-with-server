@@ -121,18 +121,21 @@
             card.appendChild(badge);
           }
 
+          const imageWrap = document.createElement("div");
+          imageWrap.className = "menu-item-image";
           if (item.image_url) {
             const img = document.createElement("img");
             img.src = item.image_url;
             img.alt = item.name || "";
             img.loading = "lazy";
-            card.appendChild(img);
+            imageWrap.appendChild(img);
           } else {
             const img = document.createElement("div");
             img.className = "img-placeholder";
             safeText(img, item.name || "");
-            card.appendChild(img);
+            imageWrap.appendChild(img);
           }
+          card.appendChild(imageWrap);
 
           const title = document.createElement("h4");
           safeText(title, item.name);
