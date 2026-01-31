@@ -14,6 +14,7 @@ from src.db_models import (
     MenuCategory,
     MenuItem,
     Order,
+    Promotion,
     Reservation,
     Table,
     Tenant,
@@ -24,6 +25,7 @@ MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
 PLAN_ORDER = {"basic": 0, "standard": 1, "vip": 2}
 ORDER_STATUSES = ("NEW", "ACCEPTED", "COOKING", "READY", "COMPLETED", "CANCELED")
 COMPLETED_STATUSES = {"COMPLETED", "DONE", "APPROVED"}
+PROMOTION_TYPES = {"item_of_the_day", "happy_hours"}
 LEGACY_STATUS_MAP = {
     "new": "NEW",
     "approved": "ACCEPTED",
@@ -271,10 +273,134 @@ def _price_lookup(tenant: Tenant) -> Dict[str, Dict[str, Any]]:
     return mapping
 
 
+def _time_in_window(now_time, start_time, end_time) -> bool:
+    if not start_time or not end_time:
+        return True
+    if end_time >= start_time:
+        return start_time <= now_time <= end_time
+    return now_time >= start_time or now_time <= end_time
+
+
+def list_promotions(tenant: Tenant, include_inactive: bool = False) -> List[Promotion]:
+    with get_session() as session:
+        query = select(Promotion).where(Promotion.tenant_id == tenant.id)
+        if not include_inactive:
+            query = query.where(Promotion.is_active.is_(True))
+        return session.execute(query.order_by(Promotion.created_at.desc())).scalars().all()
+
+
+def active_promotions_for_tenant(tenant: Tenant) -> List[Promotion]:
+    now = datetime.utcnow()
+    weekday = now.weekday()
+    now_time = now.time()
+    promos = list_promotions(tenant, include_inactive=False)
+    active = []
+    for promo in promos:
+        if promo.type == "happy_hours":
+            days = promo.days_of_week or []
+            if isinstance(days, list) and days and weekday not in days:
+                continue
+            if not _time_in_window(now_time, promo.start_time, promo.end_time):
+                continue
+        active.append(promo)
+    return active
+
+
+def create_promotion(tenant: Tenant, payload: Dict[str, Any]) -> Promotion:
+    promo_type = str(payload.get("type") or "").strip().lower()
+    if promo_type not in PROMOTION_TYPES:
+        raise ValueError("Invalid promotion type")
+    discount = payload.get("discount_percent")
+    if discount is not None:
+        discount = int(discount)
+        if discount < 0 or discount > 100:
+            raise ValueError("Invalid discount percent")
+    days = payload.get("days_of_week")
+    if days is not None and not isinstance(days, list):
+        raise ValueError("days_of_week must be list")
+    promo = Promotion(
+        tenant_id=tenant.id,
+        type=promo_type,
+        is_active=bool(payload.get("is_active", True)),
+        product_id=payload.get("product_id"),
+        discount_percent=discount,
+        start_time=payload.get("start_time"),
+        end_time=payload.get("end_time"),
+        days_of_week=days,
+    )
+    with get_session() as session:
+        session.add(promo)
+        session.flush()
+        session.refresh(promo)
+    return promo
+
+
+def update_promotion(tenant: Tenant, promo_id: int, payload: Dict[str, Any]) -> Promotion:
+    with get_session() as session:
+        promo = (
+            session.execute(
+                select(Promotion).where(Promotion.tenant_id == tenant.id, Promotion.id == promo_id)
+            )
+            .scalars()
+            .first()
+        )
+        if not promo:
+            raise NoResultFound()
+        if "type" in payload:
+            promo_type = str(payload.get("type") or "").strip().lower()
+            if promo_type not in PROMOTION_TYPES:
+                raise ValueError("Invalid promotion type")
+            promo.type = promo_type
+        if "is_active" in payload:
+            promo.is_active = bool(payload.get("is_active"))
+        if "product_id" in payload:
+            promo.product_id = payload.get("product_id")
+        if "discount_percent" in payload:
+            discount = payload.get("discount_percent")
+            if discount is not None:
+                discount = int(discount)
+                if discount < 0 or discount > 100:
+                    raise ValueError("Invalid discount percent")
+            promo.discount_percent = discount
+        if "start_time" in payload:
+            promo.start_time = payload.get("start_time")
+        if "end_time" in payload:
+            promo.end_time = payload.get("end_time")
+        if "days_of_week" in payload:
+            days = payload.get("days_of_week")
+            if days is not None and not isinstance(days, list):
+                raise ValueError("days_of_week must be list")
+            promo.days_of_week = days
+        session.flush()
+        session.refresh(promo)
+        return promo
+
+
+def _apply_promotions(tenant: Tenant, subtotal: Decimal) -> Tuple[Decimal, List[Dict[str, Any]]]:
+    if not tenant_has_plan(tenant, "standard"):
+        return subtotal, []
+    promos = active_promotions_for_tenant(tenant)
+    applied: List[Dict[str, Any]] = []
+    discount_percent = 0
+    for promo in promos:
+        if promo.type == "happy_hours" and promo.discount_percent:
+            discount_percent = max(discount_percent, int(promo.discount_percent))
+            applied.append(
+                {"id": promo.id, "type": promo.type, "discount_percent": int(promo.discount_percent)}
+            )
+        elif promo.type == "item_of_the_day":
+            applied.append({"id": promo.id, "type": promo.type, "product_id": promo.product_id})
+
+    if discount_percent <= 0:
+        return subtotal, applied
+    discount_total = (subtotal * Decimal(discount_percent) / Decimal(100)).quantize(Decimal("0.01"))
+    return (subtotal - discount_total).quantize(Decimal("0.01")), applied
+
+
 def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
     tenant = tenant or ensure_default_tenant()
     price_map = _price_lookup(tenant)
-    total = Decimal(0)
+    subtotal = Decimal(0)
     items_payload = []
     for it in data.get("items", []):
         qty = int(it.get("qty") or 0)
@@ -282,9 +408,13 @@ def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
         meta = price_map.get(item_id, {})
         price = Decimal(meta.get("price", 0))
         line_total = price * qty
-        total += line_total
+        subtotal += line_total
         items_payload.append({"item_id": item_id, "qty": qty})
-    total = total.quantize(Decimal("0.01"))
+    subtotal = subtotal.quantize(Decimal("0.01"))
+    total, applied_promos = _apply_promotions(tenant, subtotal)
+    raw_payload = dict(data)
+    if applied_promos:
+        raw_payload["applied_promotions"] = applied_promos
 
     order = Order(
         tenant_id=tenant.id,
@@ -296,7 +426,7 @@ def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
         customer_phone=data.get("customer", {}).get("phone"),
         customer_address=data.get("customer", {}).get("address"),
         customer_chat_id=data.get("customer_chat_id"),
-        raw_payload=data,
+        raw_payload=raw_payload,
     )
     with get_session() as session:
         session.add(order)

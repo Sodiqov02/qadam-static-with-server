@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Analytics | Qadam</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page single">
+    <main class="content">
+      <header class="content-head">
+        <div>
+          <p class="eyebrow">Admin</p>
+          <h2>Analytics</h2>
+        </div>
+        <div class="lang-switch">
+          <button class="ghost-btn" data-range="today">Today</button>
+          <button class="ghost-btn ghost-active" data-range="7d">Last 7d</button>
+          <button class="ghost-btn" data-range="30d">Last 30d</button>
+        </div>
+      </header>
+
+      <section class="analytics-grid" id="analytics">
+        <div class="stat-card">
+          <p class="muted">Orders</p>
+          <h3 id="stat-orders">0</h3>
+        </div>
+        <div class="stat-card">
+          <p class="muted">Revenue</p>
+          <h3 id="stat-revenue">0</h3>
+        </div>
+        <div class="stat-card">
+          <p class="muted">Average check</p>
+          <h3 id="stat-avg">0</h3>
+        </div>
+      </section>
+
+      <section class="orders-panel">
+        <h3>Top items</h3>
+        <table class="analytics-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Revenue</th>
+            </tr>
+          </thead>
+          <tbody id="top-items"></tbody>
+        </table>
+        <p id="analytics-status" class="muted status"></p>
+      </section>
+
+      <section class="orders-panel">
+        <header class="content-head">
+          <div>
+            <p class="eyebrow">Promotions</p>
+            <h2>Manage</h2>
+          </div>
+          <a class="ghost-btn" href="/">Back to menu</a>
+        </header>
+
+        <form id="promo-form" class="form">
+          <div class="grid-two">
+            <div class="field">
+              <label>Type</label>
+              <select id="promo-type">
+                <option value="item_of_the_day">Item of the day</option>
+                <option value="happy_hours">Happy hours</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Product ID (optional)</label>
+              <input id="promo-product" placeholder="Menu item id" />
+            </div>
+          </div>
+          <div class="grid-two">
+            <div class="field">
+              <label>Discount %</label>
+              <input id="promo-discount" type="number" min="0" max="100" />
+            </div>
+            <div class="field">
+              <label>Days of week (0-6, comma)</label>
+              <input id="promo-days" placeholder="1,2,3,4,5" />
+            </div>
+          </div>
+          <div class="grid-two">
+            <div class="field">
+              <label>Start time</label>
+              <input id="promo-start" type="time" />
+            </div>
+            <div class="field">
+              <label>End time</label>
+              <input id="promo-end" type="time" />
+            </div>
+          </div>
+          <button type="submit">Create promotion</button>
+          <p id="promo-status" class="muted status"></p>
+        </form>
+
+        <div id="promo-list" class="orders-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
+    const tenantParam = tenantSlug ? `&tenant=${encodeURIComponent(tenantSlug)}` : "";
+
+    const ordersEl = document.getElementById("stat-orders");
+    const revenueEl = document.getElementById("stat-revenue");
+    const avgEl = document.getElementById("stat-avg");
+    const topItemsEl = document.getElementById("top-items");
+    const analyticsStatus = document.getElementById("analytics-status");
+
+    const promoForm = document.getElementById("promo-form");
+    const promoStatus = document.getElementById("promo-status");
+    const promoList = document.getElementById("promo-list");
+
+    const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
+
+    async function loadAnalytics(range = "7d") {
+      analyticsStatus.textContent = "";
+      const res = await fetch(`/api/admin/analytics?range=${range}${tenantParam}`);
+      if (res.status === 403) {
+        analyticsStatus.textContent = "Analytics Standard/VIP rejasida mavjud.";
+        return;
+      }
+      if (!res.ok) {
+        analyticsStatus.textContent = "Analytics yuklab bo'lmadi.";
+        return;
+      }
+      const data = await res.json();
+      ordersEl.textContent = data.orders || 0;
+      revenueEl.textContent = formatPrice(data.revenue || 0);
+      avgEl.textContent = formatPrice(data.average_check || 0);
+      topItemsEl.innerHTML = "";
+      (data.top_items || []).forEach((item) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `<td>${item.name}</td><td>${item.qty}</td><td>${formatPrice(item.revenue)}</td>`;
+        topItemsEl.appendChild(row);
+      });
+    }
+
+    async function loadPromotions() {
+      promoStatus.textContent = "";
+      const res = await fetch(`/api/admin/promotions?tenant=${encodeURIComponent(tenantSlug || "")}`);
+      if (res.status === 403) {
+        promoStatus.textContent = "Promotions Standard/VIP rejasida mavjud.";
+        return;
+      }
+      if (!res.ok) {
+        promoStatus.textContent = "Promolarni yuklab bo'lmadi.";
+        return;
+      }
+      const data = await res.json();
+      renderPromotions(data.items || []);
+    }
+
+    function renderPromotions(items) {
+      promoList.innerHTML = "";
+      if (!items.length) {
+        promoList.innerHTML = "<p class=\"muted\">Promo yo'q</p>";
+        return;
+      }
+      items.forEach((promo) => {
+        const card = document.createElement("div");
+        card.className = "orders-card";
+        card.innerHTML = `
+          <div class="orders-card-head">
+            <div><strong>#${promo.id}</strong> · ${promo.type}</div>
+            <span class="status-pill">${promo.is_active ? "Active" : "Inactive"}</span>
+          </div>
+          <div class="muted">Product: ${promo.product_id || "-"} | Discount: ${promo.discount_percent || 0}%</div>
+          <div class="muted">Time: ${promo.start_time || "-"} - ${promo.end_time || "-"} | Days: ${(promo.days_of_week || []).join(", ")}</div>
+        `;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = promo.is_active ? "Deactivate" : "Activate";
+        btn.addEventListener("click", async () => {
+          await updatePromo(promo.id, { is_active: !promo.is_active });
+          await loadPromotions();
+        });
+        const footer = document.createElement("div");
+        footer.className = "orders-card-foot";
+        footer.appendChild(document.createElement("div"));
+        footer.appendChild(btn);
+        card.appendChild(footer);
+        promoList.appendChild(card);
+      });
+    }
+
+    async function updatePromo(id, payload) {
+      const res = await fetch(`/api/admin/promotions/${id}?tenant=${encodeURIComponent(tenantSlug || "")}` , {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        promoStatus.textContent = "Promo yangilashda xatolik.";
+      }
+    }
+
+    promoForm.addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      promoStatus.textContent = "";
+      const type = document.getElementById("promo-type").value;
+      const productId = document.getElementById("promo-product").value;
+      const discount = document.getElementById("promo-discount").value;
+      const days = document.getElementById("promo-days").value;
+      const start = document.getElementById("promo-start").value;
+      const end = document.getElementById("promo-end").value;
+
+      const payload = {
+        type,
+        product_id: productId ? Number(productId) : null,
+        discount_percent: discount ? Number(discount) : null,
+        days_of_week: days ? days.split(",").map((d) => Number(d.trim())).filter((d) => !Number.isNaN(d)) : null,
+        start_time: start || null,
+        end_time: end || null,
+        is_active: true,
+      };
+
+      const res = await fetch(`/api/admin/promotions?tenant=${encodeURIComponent(tenantSlug || "")}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        promoStatus.textContent = "Promo yaratishda xatolik.";
+        return;
+      }
+      promoStatus.textContent = "Promo yaratildi.";
+      promoForm.reset();
+      await loadPromotions();
+    });
+
+    document.querySelectorAll("[data-range]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-range]").forEach((b) => b.classList.remove("ghost-active"));
+        btn.classList.add("ghost-active");
+        loadAnalytics(btn.getAttribute("data-range"));
+      });
+    });
+
+    loadAnalytics("7d");
+    loadPromotions();
+  </script>
+</body>
+</html>

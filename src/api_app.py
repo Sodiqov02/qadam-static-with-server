@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, time
 import logging
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse
@@ -15,15 +15,19 @@ from src.notifier import notify_order_status_changed, notify_reservation_created
 from src.store import (
     DEFAULT_TENANT_SLUG,
     add_order,
+    active_promotions_for_tenant,
     analytics_for_tenant,
+    create_promotion,
     create_reservation,
     ensure_default_tenant,
     get_menu_for_tenant,
     get_tenant_by_slug,
     get_order_for_tenant,
     list_reservations,
+    list_promotions,
     list_orders_by_phone,
     update_order_status,
+    update_promotion,
     tenant_plan,
     tenant_public_features,
     tenant_has_plan,
@@ -37,6 +41,7 @@ WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 INDEX_FILE = WEB_DIR / "index.html"
 STYLE_FILE = WEB_DIR / "style.css"
 MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
+ADMIN_FILE = WEB_DIR / "admin.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 
 if STATIC_DIR.exists():
@@ -57,6 +62,26 @@ class ReservationUpdate(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: str
+
+
+class PromotionIn(BaseModel):
+    type: str
+    is_active: bool = True
+    product_id: int | None = None
+    discount_percent: int | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    days_of_week: list[int] | None = None
+
+
+class PromotionUpdate(BaseModel):
+    type: str | None = None
+    is_active: bool | None = None
+    product_id: int | None = None
+    discount_percent: int | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    days_of_week: list[int] | None = None
 
 
 class TenantPublic(BaseModel):
@@ -116,6 +141,19 @@ def _item_map(menu: dict) -> dict:
     return mapping
 
 
+def _promo_to_dict(promo) -> dict:
+    return {
+        "id": promo.id,
+        "type": promo.type,
+        "is_active": promo.is_active,
+        "product_id": promo.product_id,
+        "discount_percent": promo.discount_percent,
+        "start_time": promo.start_time.isoformat() if promo.start_time else None,
+        "end_time": promo.end_time.isoformat() if promo.end_time else None,
+        "days_of_week": promo.days_of_week,
+    }
+
+
 @app.on_event("startup")
 def ensure_default():
     try:
@@ -153,6 +191,13 @@ def serve_my_orders():
     if not MY_ORDERS_FILE.exists():
         raise HTTPException(404, "My orders page not found")
     return FileResponse(MY_ORDERS_FILE)
+
+
+@app.get("/admin", include_in_schema=False)
+def serve_admin():
+    if not ADMIN_FILE.exists():
+        raise HTTPException(404, "Admin page not found")
+    return FileResponse(ADMIN_FILE)
 
 
 @app.get("/menu", response_model=Menu)
@@ -287,6 +332,50 @@ def reorder_order(oid: int, request: Request, phone: str, tenant: str | None = N
     }
     new_id = add_order(payload, tenant=tenant_obj)
     return {"order_id": new_id}
+
+
+@app.get("/api/promotions")
+def list_active_promotions(request: Request, tenant: str | None = None):
+    tenant_obj = _resolve_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
+    promos = active_promotions_for_tenant(tenant_obj)
+    return {"items": [_promo_to_dict(p) for p in promos]}
+
+
+@app.get("/api/admin/promotions")
+def admin_list_promotions(request: Request, tenant: str | None = None):
+    tenant_obj = _resolve_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
+    promos = list_promotions(tenant_obj, include_inactive=True)
+    return {"items": [_promo_to_dict(p) for p in promos]}
+
+
+@app.post("/api/admin/promotions")
+def admin_create_promotion(payload: PromotionIn, request: Request, tenant: str | None = None):
+    tenant_obj = _resolve_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
+    try:
+        promo = create_promotion(tenant_obj, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return _promo_to_dict(promo)
+
+
+@app.patch("/api/admin/promotions/{pid}")
+def admin_update_promotion(pid: int, payload: PromotionUpdate, request: Request, tenant: str | None = None):
+    tenant_obj = _resolve_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
+    try:
+        promo = update_promotion(tenant_obj, pid, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except Exception:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Promotion not found")
+    return _promo_to_dict(promo)
 
 
 @app.get("/api/admin/analytics")

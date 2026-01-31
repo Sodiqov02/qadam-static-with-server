@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Time,
     Numeric,
     String,
     Text,
@@ -113,4 +114,19 @@ class Reservation(Base):
     datetime = Column(DateTime, nullable=False)
     guests = Column(Integer, nullable=False, default=1)
     status = Column(String(32), nullable=False, default="new")
+    created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
+
+
+class Promotion(Base):
+    __tablename__ = "promotions"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String(32), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    product_id = Column(Integer, ForeignKey("menu_items.id", ondelete="SET NULL"), nullable=True)
+    discount_percent = Column(Integer, nullable=True)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
+    days_of_week = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)

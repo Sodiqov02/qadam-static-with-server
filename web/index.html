@@ -32,6 +32,7 @@
         </div>
         <div class="lang-switch">
           <a class="ghost-btn" id="orders-link" href="/my-orders">My Orders</a>
+          <a class="ghost-btn" id="admin-link" href="/admin">Admin</a>
           <button class="ghost-btn">Uz</button>
           <button class="ghost-btn ghost-active">Ru</button>
           <button class="ghost-btn">En</button>
@@ -104,17 +105,27 @@
     const heroMedia = document.getElementById("hero-media");
     const heroCta = document.getElementById("hero-cta");
     const ordersLink = document.getElementById("orders-link");
+    const adminLink = document.getElementById("admin-link");
 
     const cart = new Map();
     let menuCache = null;
+    let promotions = [];
+    let discountPercent = 0;
     const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
 
     const tenantPath = (path) => (tenantSlug ? `/t/${tenantSlug}${path}` : path);
     if (ordersLink && tenantSlug) {
       ordersLink.href = `/my-orders?tenant=${encodeURIComponent(tenantSlug)}`;
     }
+    if (adminLink && tenantSlug) {
+      adminLink.href = `/admin?tenant=${encodeURIComponent(tenantSlug)}`;
+    }
 
     const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
+    const effectivePrice = (price) => {
+      if (!discountPercent) return Number(price || 0);
+      return Math.round((Number(price || 0) * (100 - discountPercent)) / 100);
+    };
 
     async function loadTenant() {
       const res = await fetch(tenantPath("/tenant"), { credentials: "same-origin" });
@@ -138,6 +149,17 @@
       renderMenu(data.categories || []);
     }
 
+    async function loadPromotions() {
+      const url = tenantSlug ? `/api/promotions?tenant=${encodeURIComponent(tenantSlug)}` : "/api/promotions";
+      const res = await fetch(url, { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      promotions = data.items || [];
+      discountPercent = promotions
+        .filter((p) => p.type === "happy_hours" && p.discount_percent)
+        .reduce((acc, p) => Math.max(acc, p.discount_percent), 0);
+    }
+
     function safeText(el, text) {
       el.textContent = text ?? "";
       return el;
@@ -155,6 +177,21 @@
             const badge = document.createElement("div");
             badge.className = "badge-green";
             safeText(badge, "100% tabiy");
+            card.appendChild(badge);
+          }
+          const itemPromo = promotions.find(
+            (p) => p.type === "item_of_the_day" && String(p.product_id) === String(item.id)
+          );
+          if (itemPromo) {
+            const badge = document.createElement("div");
+            badge.className = "badge-promo";
+            safeText(badge, "Item of the day");
+            card.appendChild(badge);
+          }
+          if (discountPercent) {
+            const badge = document.createElement("div");
+            badge.className = "badge-promo-alt";
+            safeText(badge, `Happy hours -${discountPercent}%`);
             card.appendChild(badge);
           }
 
@@ -186,7 +223,14 @@
           priceRow.className = "price-row";
           const price = document.createElement("div");
           price.className = "price";
-          safeText(price, formatPrice(item.price));
+          const displayPrice = effectivePrice(item.price);
+          safeText(price, formatPrice(displayPrice));
+          if (discountPercent) {
+            const note = document.createElement("div");
+            note.className = "promo-note";
+            safeText(note, `Old: ${formatPrice(item.price)}`);
+            price.appendChild(note);
+          }
           const btn = document.createElement("button");
           btn.className = "add-btn";
           btn.type = "button";
@@ -236,7 +280,7 @@
       items.forEach(({ item, qty }) => {
         const li = document.createElement("li");
         li.className = "cart-item";
-        const lineTotal = Number(item.price || 0) * qty;
+        const lineTotal = effectivePrice(item.price) * qty;
         total += lineTotal;
         const left = document.createElement("span");
         safeText(left, `${item.name} x${qty}`);
@@ -295,8 +339,10 @@
     });
 
     loadTenant().catch(() => {});
-    loadMenu().catch((e) => {
-      menuEl.innerHTML = `<p class="muted">${e.message}</p>`;
+    loadPromotions().catch(() => {}).finally(() => {
+      loadMenu().catch((e) => {
+        menuEl.innerHTML = `<p class="muted">${e.message}</p>`;
+      });
     });
   </script>
 </body>

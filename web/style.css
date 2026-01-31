@@ -195,6 +195,28 @@ body {
   font-size: 12px;
   font-weight: 700;
 }
+.menu-card .badge-promo {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.menu-card .badge-promo-alt {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  background: #e0f2fe;
+  color: #075985;
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
 .menu-card img {
   width: 100%;
   height: 100%;
@@ -221,6 +243,14 @@ body {
 .price {
   font-size: 18px;
   font-weight: 800;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.promo-note {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: line-through;
 }
 .add-btn {
   width: 44px;
@@ -318,6 +348,38 @@ textarea { resize: vertical; min-height: 70px; }
   color: #047857;
   font-size: 12px;
   font-weight: 700;
+}
+.analytics-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 16px;
+}
+.stat-card {
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+}
+.stat-card h3 {
+  margin: 6px 0 0;
+  font-size: 22px;
+}
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+.analytics-table th,
+.analytics-table td {
+  text-align: left;
+  border-bottom: 1px solid var(--stroke);
+  padding: 8px 6px;
+  font-size: 14px;
+}
+.analytics-table th {
+  color: var(--muted);
+  font-weight: 600;
 }
 button {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
