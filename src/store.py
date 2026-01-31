@@ -185,6 +185,27 @@ def get_tenant_by_slug(slug: str) -> Optional[Tenant]:
         return session.execute(select(Tenant).where(Tenant.slug == slug)).scalar_one_or_none()
 
 
+def get_tenant_by_bot_token(token: str) -> Optional[Tenant]:
+    if not token:
+        return None
+    with get_session() as session:
+        return (
+            session.execute(select(Tenant).where(Tenant.bot_token == token, Tenant.bot_enabled.is_(True)))
+            .scalar_one_or_none()
+        )
+
+
+def list_enabled_bot_tenants() -> List[Tenant]:
+    with get_session() as session:
+        return (
+            session.execute(
+                select(Tenant).where(Tenant.bot_enabled.is_(True), Tenant.bot_token.is_not(None))
+            )
+            .scalars()
+            .all()
+        )
+
+
 def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
     with get_session() as session:
         categories = session.execute(
@@ -483,13 +504,15 @@ def update_order_status(
     oid: int,
     status: str,
     admin_chat_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
     *,
     enforce_workflow: bool = True,
 ) -> Tuple[bool, Optional[Order], Optional[Tenant], Optional[str], Optional[str]]:
     with get_session() as session:
-        row = session.execute(
-            select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
-        ).first()
+        query = select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
+        if tenant_id is not None:
+            query = query.where(Order.tenant_id == tenant_id)
+        row = session.execute(query).first()
         if not row:
             return False, None, None, None, None
         order, tenant = row

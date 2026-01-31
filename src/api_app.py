@@ -90,6 +90,8 @@ class TenantPublic(BaseModel):
     hero_image: str | None = None
     plan: str | None = None
     features: dict | None = None
+    bot_username: str | None = None
+    bot_enabled: bool | None = None
 
 
 def _tenant_public(tenant):
@@ -102,6 +104,8 @@ def _tenant_public(tenant):
         hero_image=hero_image,
         plan=tenant_plan(tenant),
         features=tenant_public_features(tenant),
+        bot_username=getattr(tenant, "bot_username", None),
+        bot_enabled=getattr(tenant, "bot_enabled", None),
     )
 
 

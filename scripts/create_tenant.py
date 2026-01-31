@@ -20,6 +20,9 @@ def main():
     parser.add_argument("--admin_chat_id", type=int, help="Telegram admin chat id")
     parser.add_argument("--features", nargs="*", default=[], help="Feature flags, e.g. reservations")
     parser.add_argument("--plan", default="basic", help="Plan tier: basic | standard | vip")
+    parser.add_argument("--bot_token", help="Telegram bot token for this tenant")
+    parser.add_argument("--bot_username", help="Telegram bot username (without @)")
+    parser.add_argument("--bot_enabled", action="store_true", help="Enable bot for this tenant")
     args = parser.parse_args()
 
     features = parse_features(args.features)
@@ -35,6 +38,9 @@ def main():
             slug=args.slug,
             name=args.name,
             admin_chat_id=args.admin_chat_id,
+            bot_token=args.bot_token,
+            bot_username=args.bot_username,
+            bot_enabled=bool(args.bot_enabled),
             features=features,
             is_active=True,
         )
