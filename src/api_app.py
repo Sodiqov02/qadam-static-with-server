@@ -20,7 +20,9 @@ from src.store import (
     ensure_default_tenant,
     get_menu_for_tenant,
     get_tenant_by_slug,
+    get_order_for_tenant,
     list_reservations,
+    list_orders_by_phone,
     update_order_status,
     tenant_plan,
     tenant_public_features,
@@ -34,6 +36,7 @@ logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 INDEX_FILE = WEB_DIR / "index.html"
 STYLE_FILE = WEB_DIR / "style.css"
+MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 
 if STATIC_DIR.exists():
@@ -95,7 +98,7 @@ def _tenant_dep(slug: str):
     return tenant
 
 
-def _resolve_admin_tenant(request: Request, tenant_slug: str | None):
+def _resolve_tenant(request: Request, tenant_slug: str | None):
     slug = tenant_slug or request.headers.get("x-tenant-slug") or DEFAULT_TENANT_SLUG
     tenant = get_tenant_by_slug(slug)
     if not tenant:
@@ -103,6 +106,14 @@ def _resolve_admin_tenant(request: Request, tenant_slug: str | None):
     if not tenant.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Tenant inactive")
     return tenant
+
+
+def _item_map(menu: dict) -> dict:
+    mapping = {}
+    for cat in menu.get("categories", []):
+        for it in cat.get("items", []):
+            mapping[str(it.get("id"))] = it
+    return mapping
 
 
 @app.on_event("startup")
@@ -135,6 +146,13 @@ def serve_style():
     if not STYLE_FILE.exists():
         raise HTTPException(404, "Style not found")
     return FileResponse(STYLE_FILE, media_type="text/css")
+
+
+@app.get("/my-orders", include_in_schema=False)
+def serve_my_orders():
+    if not MY_ORDERS_FILE.exists():
+        raise HTTPException(404, "My orders page not found")
+    return FileResponse(MY_ORDERS_FILE)
 
 
 @app.get("/menu", response_model=Menu)
@@ -209,9 +227,71 @@ async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate
     return {"ok": True}
 
 
+@app.get("/api/orders/history")
+def order_history(request: Request, phone: str, tenant: str | None = None, limit: int = 20):
+    tenant_obj = _resolve_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include order history")
+    orders = list_orders_by_phone(tenant_obj, phone, limit=limit)
+    menu = get_menu_for_tenant(tenant_obj)
+    item_map = _item_map(menu)
+    items = []
+    for order in orders:
+        order_items = []
+        for it in order.items or []:
+            item_id = str(it.get("item_id"))
+            qty = int(it.get("qty") or 0)
+            meta = item_map.get(item_id, {})
+            price = int(meta.get("price") or 0)
+            order_items.append(
+                {
+                    "item_id": item_id,
+                    "name": meta.get("name") or item_id,
+                    "qty": qty,
+                    "price": price,
+                    "line_total": price * qty,
+                }
+            )
+        items.append(
+            {
+                "id": order.id,
+                "status": order.status,
+                "total": float(order.total or 0),
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+                "items": order_items,
+            }
+        )
+    return {"items": items}
+
+
+@app.post("/api/orders/{oid}/reorder")
+def reorder_order(oid: int, request: Request, phone: str, tenant: str | None = None):
+    tenant_obj = _resolve_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reorder")
+    order = get_order_for_tenant(tenant_obj, oid)
+    if not order:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if not order.customer_phone or order.customer_phone != phone:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Customer phone mismatch")
+    payload = {
+        "items": order.items or [],
+        "customer": {
+            "name": order.customer_name or "",
+            "phone": order.customer_phone or "",
+            "address": order.customer_address or "",
+            "comment": "Reorder",
+        },
+        "source": "reorder",
+        "customer_chat_id": order.customer_chat_id,
+    }
+    new_id = add_order(payload, tenant=tenant_obj)
+    return {"order_id": new_id}
+
+
 @app.get("/api/admin/analytics")
 def admin_analytics(request: Request, range: str = "7d", tenant: str | None = None):
-    tenant_obj = _resolve_admin_tenant(request, tenant)
+    tenant_obj = _resolve_tenant(request, tenant)
     if not tenant_has_plan(tenant_obj, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include analytics")
     try:

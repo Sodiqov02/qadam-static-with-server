@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Orders | Qadam</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page single">
+    <main class="content">
+      <header class="content-head">
+        <div>
+          <p class="eyebrow">Shaxsiy</p>
+          <h2>My Orders</h2>
+        </div>
+        <a class="ghost-btn" href="/">Back to menu</a>
+      </header>
+
+      <section class="orders-panel">
+        <div class="field">
+          <label>Telefon raqami</label>
+          <div class="orders-search">
+            <input id="phone" autocomplete="tel" placeholder="+998 90 000 00 00" />
+            <button id="load-orders" type="button">Yuklash</button>
+          </div>
+        </div>
+        <p id="orders-status" class="muted status"></p>
+        <div id="orders-list" class="orders-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const phoneInput = document.getElementById("phone");
+    const loadBtn = document.getElementById("load-orders");
+    const statusEl = document.getElementById("orders-status");
+    const listEl = document.getElementById("orders-list");
+
+    const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
+    const tenantParam = tenantSlug ? `&tenant=${encodeURIComponent(tenantSlug)}` : "";
+
+    const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
+    const formatDate = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return d.toLocaleString("ru-RU");
+    };
+
+    function renderOrders(items, phone) {
+      listEl.innerHTML = "";
+      if (!items.length) {
+        listEl.innerHTML = "<p class=\"muted\">Buyurtmalar topilmadi.</p>";
+        return;
+      }
+      items.forEach((order) => {
+        const card = document.createElement("div");
+        card.className = "orders-card";
+
+        const header = document.createElement("div");
+        header.className = "orders-card-head";
+        header.innerHTML = `<div><strong>#${order.id}</strong><div class=\"muted\">${formatDate(order.created_at)}</div></div>`;
+
+        const status = document.createElement("span");
+        status.className = "status-pill";
+        status.textContent = order.status || "NEW";
+        header.appendChild(status);
+
+        const itemsList = document.createElement("ul");
+        itemsList.className = "orders-items";
+        (order.items || []).forEach((it) => {
+          const li = document.createElement("li");
+          li.textContent = `${it.name} x${it.qty} · ${formatPrice(it.line_total)}`;
+          itemsList.appendChild(li);
+        });
+
+        const footer = document.createElement("div");
+        footer.className = "orders-card-foot";
+        const total = document.createElement("div");
+        total.textContent = `Jami: ${formatPrice(order.total)}`;
+        const reorderBtn = document.createElement("button");
+        reorderBtn.type = "button";
+        reorderBtn.textContent = "Qayta buyurtma";
+        reorderBtn.addEventListener("click", () => reorder(order.id, phone));
+        footer.appendChild(total);
+        footer.appendChild(reorderBtn);
+
+        card.appendChild(header);
+        card.appendChild(itemsList);
+        card.appendChild(footer);
+        listEl.appendChild(card);
+      });
+    }
+
+    async function loadOrders() {
+      const phone = (phoneInput.value || "").trim();
+      if (!phone) {
+        statusEl.textContent = "Telefon raqamini kiriting.";
+        return;
+      }
+      statusEl.textContent = "";
+      loadBtn.disabled = true;
+      try {
+        const res = await fetch(`/api/orders/history?phone=${encodeURIComponent(phone)}${tenantParam}`);
+        if (res.status === 403) {
+          statusEl.textContent = "Bu funksiya faqat Standard/VIP rejasida mavjud.";
+          listEl.innerHTML = "";
+          return;
+        }
+        if (!res.ok) throw new Error("Buyurtmalarni yuklab bo'lmadi");
+        const data = await res.json();
+        renderOrders(data.items || [], phone);
+      } catch (err) {
+        statusEl.textContent = err.message || "Xatolik";
+      } finally {
+        loadBtn.disabled = false;
+      }
+    }
+
+    async function reorder(orderId, phone) {
+      statusEl.textContent = "";
+      try {
+        const res = await fetch(`/api/orders/${orderId}/reorder?phone=${encodeURIComponent(phone)}${tenantParam}`, {
+          method: "POST",
+        });
+        if (res.status === 403) {
+          statusEl.textContent = "Qayta buyurtma Standard/VIP rejasida mavjud.";
+          return;
+        }
+        if (!res.ok) throw new Error("Qayta buyurtma qilishda xatolik");
+        const data = await res.json();
+        statusEl.textContent = `Yangi buyurtma yaratildi: #${data.order_id}`;
+        await loadOrders();
+      } catch (err) {
+        statusEl.textContent = err.message || "Xatolik";
+      }
+    }
+
+    loadBtn.addEventListener("click", loadOrders);
+  </script>
+</body>
+</html>

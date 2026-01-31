@@ -268,6 +268,57 @@ textarea { resize: vertical; min-height: 70px; }
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
+.page.single {
+  grid-template-columns: 1fr;
+}
+.orders-panel {
+  margin-top: 12px;
+}
+.orders-search {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.orders-search button {
+  white-space: nowrap;
+}
+.orders-list {
+  display: grid;
+  gap: 12px;
+}
+.orders-card {
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+  display: grid;
+  gap: 10px;
+}
+.orders-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.orders-items {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+.orders-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+.status-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--pill-green);
+  color: #047857;
+  font-size: 12px;
+  font-weight: 700;
+}
 button {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #041b16;

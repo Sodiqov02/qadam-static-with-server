@@ -548,3 +548,26 @@ def analytics_for_tenant(tenant: Tenant, range_key: str) -> dict:
         "average_check": float(avg_check),
         "top_items": top_items,
     }
+
+
+def list_orders_by_phone(tenant: Tenant, phone: str, limit: int = 20) -> List[Order]:
+    with get_session() as session:
+        return (
+            session.execute(
+                select(Order)
+                .where(Order.tenant_id == tenant.id, Order.customer_phone == phone)
+                .order_by(Order.created_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+
+def get_order_for_tenant(tenant: Tenant, oid: int) -> Optional[Order]:
+    with get_session() as session:
+        return (
+            session.execute(select(Order).where(Order.tenant_id == tenant.id, Order.id == oid))
+            .scalars()
+            .first()
+        )

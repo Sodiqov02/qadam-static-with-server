@@ -31,6 +31,7 @@
           <h2>Menyu</h2>
         </div>
         <div class="lang-switch">
+          <a class="ghost-btn" id="orders-link" href="/my-orders">My Orders</a>
           <button class="ghost-btn">Uz</button>
           <button class="ghost-btn ghost-active">Ru</button>
           <button class="ghost-btn">En</button>
@@ -102,12 +103,16 @@
     const heroDesc = document.getElementById("hero-desc");
     const heroMedia = document.getElementById("hero-media");
     const heroCta = document.getElementById("hero-cta");
+    const ordersLink = document.getElementById("orders-link");
 
     const cart = new Map();
     let menuCache = null;
     const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
 
     const tenantPath = (path) => (tenantSlug ? `/t/${tenantSlug}${path}` : path);
+    if (ordersLink && tenantSlug) {
+      ordersLink.href = `/my-orders?tenant=${encodeURIComponent(tenantSlug)}`;
+    }
 
     const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
 
