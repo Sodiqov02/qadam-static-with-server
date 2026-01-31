@@ -77,6 +77,7 @@ class Order(Base):
     customer_name = Column(String(255), nullable=True)
     customer_phone = Column(String(64), nullable=True)
     customer_address = Column(Text, nullable=True)
+    customer_chat_id = Column(BigInteger, nullable=True)
     raw_payload = Column(JSON, nullable=True)
 
     tenant = relationship("Tenant", back_populates="orders")
@@ -113,4 +114,3 @@ class Reservation(Base):
     guests = Column(Integer, nullable=False, default=1)
     status = Column(String(32), nullable=False, default="new")
     created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
-

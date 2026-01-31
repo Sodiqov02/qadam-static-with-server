@@ -483,6 +483,7 @@ async def finish_order(message: types.Message, state: FSMContext):
             "comment": comment,
         },
         "source": "bot",
+        "customer_chat_id": user_id,
     }
     base_url = (settings.API_BASE_URL or "").rstrip("/")
     if base_url.endswith("/api"):

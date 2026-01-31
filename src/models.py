@@ -29,7 +29,8 @@ class OrderIn(BaseModel):
     items: List[OrderItem]
     customer: Customer
     source: Literal["site", "bot"] = "site"
+    customer_chat_id: Optional[int] = None
 
 class OrderOut(BaseModel):
     order_id: int
-    status: str = "new"
+    status: str = "NEW"

@@ -1,7 +1,7 @@
 import json
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import NoResultFound
@@ -21,6 +21,28 @@ from src.db_models import (
 DEFAULT_TENANT_SLUG = "default"
 MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
 PLAN_ORDER = {"basic": 0, "standard": 1, "vip": 2}
+ORDER_STATUSES = ("NEW", "ACCEPTED", "COOKING", "READY", "COMPLETED", "CANCELED")
+LEGACY_STATUS_MAP = {
+    "new": "NEW",
+    "approved": "ACCEPTED",
+    "accept": "ACCEPTED",
+    "accepted": "ACCEPTED",
+    "cooking": "COOKING",
+    "ready": "READY",
+    "done": "COMPLETED",
+    "completed": "COMPLETED",
+    "rejected": "CANCELED",
+    "canceled": "CANCELED",
+    "cancelled": "CANCELED",
+}
+STATUS_TRANSITIONS = {
+    "NEW": {"ACCEPTED", "CANCELED"},
+    "ACCEPTED": {"COOKING", "CANCELED"},
+    "COOKING": {"READY"},
+    "READY": {"COMPLETED"},
+    "COMPLETED": set(),
+    "CANCELED": set(),
+}
 
 
 def _menu_fallback() -> dict:
@@ -265,12 +287,13 @@ def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
     order = Order(
         tenant_id=tenant.id,
         source=data.get("source") or "site",
-        status="new",
+        status="NEW",
         items=items_payload,
         total=total,
         customer_name=data.get("customer", {}).get("name"),
         customer_phone=data.get("customer", {}).get("phone"),
         customer_address=data.get("customer", {}).get("address"),
+        customer_chat_id=data.get("customer_chat_id"),
         raw_payload=data,
     )
     with get_session() as session:
@@ -298,24 +321,70 @@ def get_order(oid: int) -> Optional[Dict[str, Any]]:
                 "name": order.customer_name,
                 "phone": order.customer_phone,
                 "address": order.customer_address,
+                "chat_id": order.customer_chat_id,
                 "comment": (order.raw_payload or {}).get("customer", {}).get("comment") if order.raw_payload else None,
             },
             "source": order.source,
         }
 
+def normalize_status(value: str | None) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        upper = raw.upper()
+        if upper in ORDER_STATUSES:
+            return upper
+        return LEGACY_STATUS_MAP.get(raw.lower())
+    return None
 
-def set_status(oid: int, status: str, admin_chat_id: Optional[int] = None) -> bool:
+
+def _transition_allowed(current: str, target: str) -> bool:
+    if current == target:
+        return True
+    return target in STATUS_TRANSITIONS.get(current, set())
+
+
+def update_order_status(
+    oid: int,
+    status: str,
+    admin_chat_id: Optional[int] = None,
+    *,
+    enforce_workflow: bool = True,
+) -> Tuple[bool, Optional[Order], Optional[Tenant], Optional[str], Optional[str]]:
     with get_session() as session:
         row = session.execute(
             select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
         ).first()
         if not row:
-            return False
+            return False, None, None, None, None
         order, tenant = row
         if admin_chat_id and tenant.admin_chat_id and tenant.admin_chat_id != admin_chat_id:
-            return False
-        session.execute(update(Order).where(Order.id == oid).values(status=status))
-        return True
+            return False, order, tenant, None, None
+
+        current = normalize_status(order.status) or "NEW"
+        target = normalize_status(status)
+        if not target:
+            return False, order, tenant, current, None
+
+        if enforce_workflow and not tenant_has_plan(tenant, "standard"):
+            if target not in {"NEW", "COMPLETED"}:
+                return False, order, tenant, current, target
+            if current not in {"NEW", "COMPLETED"} and target == "COMPLETED":
+                return False, order, tenant, current, target
+        elif enforce_workflow:
+            if not _transition_allowed(current, target):
+                return False, order, tenant, current, target
+
+        session.execute(update(Order).where(Order.id == oid).values(status=target))
+        return True, order, tenant, current, target
+
+
+def set_status(oid: int, status: str, admin_chat_id: Optional[int] = None) -> bool:
+    ok, _, _, _, _ = update_order_status(oid, status, admin_chat_id=admin_chat_id, enforce_workflow=True)
+    return ok
 
 
 def tenant_has_feature(tenant: Tenant, feature: str) -> bool:

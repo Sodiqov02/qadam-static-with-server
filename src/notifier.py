@@ -4,7 +4,7 @@ from aiogram import Bot
 from src.bot_init import get_bot
 from src.config import settings
 from src.db_models import Tenant
-from src.store import get_menu_for_tenant, get_order, list_reservations
+from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_has_plan
 
 
 def _tget(obj, key, default=None):
@@ -145,4 +145,22 @@ async def notify_reservation_updated(tenant: Tenant, rid: int):
             f"DateTime: {r.get('datetime','')}\n"
         )
 
+    await _safe_send(int(chat_id), text)
+
+
+async def notify_order_status_changed(order_id: int, old_status: str | None, new_status: str) -> None:
+    order = get_order(order_id)
+    if not order:
+        return
+    tenant = order.get("tenant")
+    if not isinstance(tenant, Tenant):
+        return
+    if not tenant_has_plan(tenant, "standard"):
+        return
+    customer = order.get("customer", {})
+    chat_id = customer.get("chat_id")
+    if not chat_id:
+        return
+    old_text = f" (was {old_status})" if old_status else ""
+    text = f"Your order #{order_id} status is now {new_status}.{old_text}"
     await _safe_send(int(chat_id), text)

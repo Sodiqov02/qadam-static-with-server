@@ -11,7 +11,7 @@ from src.models import Menu, OrderIn, OrderOut
 from src.db import get_session, init_db
 from src.db_models import Tenant
 from src.notifier import notify_admin  # asynchronous notifier
-from src.notifier import notify_reservation_created, notify_reservation_updated
+from src.notifier import notify_order_status_changed, notify_reservation_created, notify_reservation_updated
 from src.store import (
     DEFAULT_TENANT_SLUG,
     add_order,
@@ -20,6 +20,7 @@ from src.store import (
     get_menu_for_tenant,
     get_tenant_by_slug,
     list_reservations,
+    update_order_status,
     tenant_plan,
     tenant_public_features,
     tenant_has_feature,
@@ -46,6 +47,10 @@ class ReservationIn(BaseModel):
 
 
 class ReservationUpdate(BaseModel):
+    status: str
+
+
+class OrderStatusUpdate(BaseModel):
     status: str
 
 
@@ -190,3 +195,14 @@ async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate
     if ok:
         await notify_reservation_updated(tenant, rid)
     return {"ok": True}
+
+
+@app.patch("/api/admin/orders/{oid}/status")
+async def update_order_status_api(oid: int, payload: OrderStatusUpdate):
+    ok, order, _, prev, new = update_order_status(oid, payload.status, enforce_workflow=True)
+    if order is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
+    if not ok or not new:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid status transition or plan restriction")
+    await notify_order_status_changed(order.id, prev, new)
+    return {"ok": True, "status": new}
