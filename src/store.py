@@ -20,6 +20,7 @@ from src.db_models import (
 
 DEFAULT_TENANT_SLUG = "default"
 MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
+PLAN_ORDER = {"basic": 0, "standard": 1, "vip": 2}
 
 
 def _menu_fallback() -> dict:
@@ -131,6 +132,10 @@ def ensure_default_tenant() -> Tenant:
         if tenant:
             if not tenant.admin_chat_id and getattr(settings, "ADMIN_CHAT_ID", None):
                 tenant.admin_chat_id = settings.ADMIN_CHAT_ID
+            if not isinstance(tenant.features, dict):
+                tenant.features = {}
+            if not tenant.features.get("plan"):
+                tenant.features["plan"] = "basic"
             session.flush()
             session.refresh(tenant)
             seeded_tenant = tenant
@@ -138,7 +143,7 @@ def ensure_default_tenant() -> Tenant:
             tenant = Tenant(
                 slug=DEFAULT_TENANT_SLUG,
                 name="Default tenant",
-                features={},
+                features={"plan": "basic"},
                 admin_chat_id=getattr(settings, "ADMIN_CHAT_ID", None),
             )
             session.add(tenant)
@@ -316,6 +321,31 @@ def set_status(oid: int, status: str, admin_chat_id: Optional[int] = None) -> bo
 def tenant_has_feature(tenant: Tenant, feature: str) -> bool:
     feat = (tenant.features or {}).get(feature)
     return bool(feat) if isinstance(feat, (bool, int)) else False
+
+
+def tenant_plan(tenant: Tenant) -> str:
+    features = tenant.features or {}
+    plan = features.get("plan") or features.get("tier") or "basic"
+    if isinstance(plan, str):
+        plan = plan.strip().lower()
+    if plan not in PLAN_ORDER:
+        return "basic"
+    return plan
+
+
+def tenant_has_plan(tenant: Tenant, required_plan: str) -> bool:
+    required = required_plan.strip().lower()
+    return PLAN_ORDER.get(tenant_plan(tenant), 0) >= PLAN_ORDER.get(required, 0)
+
+
+def tenant_public_features(tenant: Tenant) -> dict:
+    features = tenant.features or {}
+    public = {}
+    for key, value in features.items():
+        if isinstance(value, (bool, int)):
+            public[key] = bool(value)
+    public["plan"] = tenant_plan(tenant)
+    return public
 
 
 def create_reservation(tenant: Tenant, payload: Dict[str, Any]) -> int:

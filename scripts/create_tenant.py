@@ -19,9 +19,12 @@ def main():
     parser.add_argument("--name", required=True, help="Tenant name")
     parser.add_argument("--admin_chat_id", type=int, help="Telegram admin chat id")
     parser.add_argument("--features", nargs="*", default=[], help="Feature flags, e.g. reservations")
+    parser.add_argument("--plan", default="basic", help="Plan tier: basic | standard | vip")
     args = parser.parse_args()
 
     features = parse_features(args.features)
+    if args.plan:
+        features["plan"] = args.plan.strip().lower()
 
     with get_session() as session:
         existing = session.query(Tenant).filter(Tenant.slug == args.slug).one_or_none()

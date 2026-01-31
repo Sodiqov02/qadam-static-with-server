@@ -20,6 +20,8 @@ from src.store import (
     get_menu_for_tenant,
     get_tenant_by_slug,
     list_reservations,
+    tenant_plan,
+    tenant_public_features,
     tenant_has_feature,
     update_reservation_status,
 )
@@ -51,13 +53,21 @@ class TenantPublic(BaseModel):
     name: str
     description: str | None = None
     hero_image: str | None = None
+    plan: str | None = None
+    features: dict | None = None
 
 
 def _tenant_public(tenant):
     features = getattr(tenant, "features", {}) or {}
     description = features.get("description") if isinstance(features.get("description"), str) else None
     hero_image = features.get("hero_image") if isinstance(features.get("hero_image"), str) else None
-    return TenantPublic(name=tenant.name, description=description, hero_image=hero_image)
+    return TenantPublic(
+        name=tenant.name,
+        description=description,
+        hero_image=hero_image,
+        plan=tenant_plan(tenant),
+        features=tenant_public_features(tenant),
+    )
 
 
 def _default_tenant_dep():
