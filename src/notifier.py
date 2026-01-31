@@ -1,10 +1,12 @@
 from typing import Optional
 
 from aiogram import Bot
-from src.bot_init import get_bot
+from aiogram.client.default import DefaultBotProperties
 from src.config import settings
 from src.db_models import Tenant
 from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_has_plan
+
+_bot_cache: dict[str, Bot] = {}
 
 
 def _tget(obj, key, default=None):
@@ -15,14 +17,21 @@ def _tget(obj, key, default=None):
         return obj.get(key, default)
     return getattr(obj, key, default)
 
-def _get_bot() -> Optional[Bot]:
-    if not settings.BOT_TOKEN:
+
+def _get_bot_for_tenant(tenant: Tenant | None) -> Optional[Bot]:
+    if not tenant:
         return None
-    return get_bot()
+    token = getattr(tenant, "bot_token", None)
+    if not token:
+        return None
+    if token in _bot_cache:
+        return _bot_cache[token]
+    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=None))
+    _bot_cache[token] = bot
+    return bot
 
 
-async def _safe_send(chat_id: int, text: str) -> None:
-    bot = _get_bot()
+async def _safe_send(bot: Bot | None, chat_id: int, text: str) -> None:
     if not bot:
         return
     try:
@@ -98,7 +107,8 @@ async def notify_admin(order_id: int):
     )
     chat_id = _resolve_admin_chat_id(tenant)
     if chat_id:
-        await _safe_send(int(chat_id), text)
+        bot = _get_bot_for_tenant(tenant)
+        await _safe_send(bot, int(chat_id), text)
 
 
 async def notify_reservation_created(tenant: Tenant, rid: int):
@@ -122,7 +132,8 @@ async def notify_reservation_created(tenant: Tenant, rid: int):
             f"Table: {r.get('table_id','')}\n"
         )
 
-    await _safe_send(int(chat_id), text)
+    bot = _get_bot_for_tenant(tenant)
+    await _safe_send(bot, int(chat_id), text)
 
 
 async def notify_reservation_updated(tenant: Tenant, rid: int):
@@ -145,7 +156,8 @@ async def notify_reservation_updated(tenant: Tenant, rid: int):
             f"DateTime: {r.get('datetime','')}\n"
         )
 
-    await _safe_send(int(chat_id), text)
+    bot = _get_bot_for_tenant(tenant)
+    await _safe_send(bot, int(chat_id), text)
 
 
 async def notify_order_status_changed(order_id: int, old_status: str | None, new_status: str) -> None:
@@ -163,4 +175,5 @@ async def notify_order_status_changed(order_id: int, old_status: str | None, new
         return
     old_text = f" (was {old_status})" if old_status else ""
     text = f"Your order #{order_id} status is now {new_status}.{old_text}"
-    await _safe_send(int(chat_id), text)
+    bot = _get_bot_for_tenant(tenant)
+    await _safe_send(bot, int(chat_id), text)
