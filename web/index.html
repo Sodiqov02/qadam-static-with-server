@@ -16,10 +16,12 @@
           Tez yetkazib berish, bir xil menyu vaqti‑soati bilan.
         </p>
         <div class="promo-qr">
-          <div class="qr-placeholder">QR</div>
+          <div class="qr-placeholder">
+            <img id="bot-qr" alt="Telegram QR" />
+          </div>
           <div class="promo-meta">
             <span>Bot orqali buyurtma</span>
-            <small>@deliveringbotliqibot</small>
+            <a id="bot-link" href="#" target="_blank" rel="noopener">@bot</a>
           </div>
         </div>
       </div>
@@ -106,6 +108,8 @@
     const heroCta = document.getElementById("hero-cta");
     const ordersLink = document.getElementById("orders-link");
     const adminLink = document.getElementById("admin-link");
+    const botLink = document.getElementById("bot-link");
+    const botQr = document.getElementById("bot-qr");
 
     const cart = new Map();
     let menuCache = null;
@@ -144,6 +148,20 @@
       if (tenantPlan === "basic") {
         if (ordersLink) ordersLink.style.display = "none";
         if (adminLink) adminLink.style.display = "none";
+      }
+      const botUsername = (data.bot_username || "").replace("@", "");
+      if (data.bot_enabled && botUsername) {
+        const link = `https://t.me/${botUsername}`;
+        if (botLink) {
+          botLink.textContent = `@${botUsername}`;
+          botLink.href = link;
+        }
+        if (botQr) {
+          botQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(link)}`;
+        }
+      } else {
+        if (botLink) botLink.textContent = "Bot mavjud emas";
+        if (botQr) botQr.removeAttribute("src");
       }
     }
 

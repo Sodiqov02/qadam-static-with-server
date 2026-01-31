@@ -19,3 +19,9 @@
 ## Бот
 - Команда `/start <slug>` или `/tenant <slug>` выбирает заведение, дальше все операции идут через `/t/{slug}/...`.
 - Меню/корзина/checkout не меняются по UX, просто работают с выбранным tenant.
+
+## Multi-bot architecture (one bot per tenant)
+- Каждый tenant имеет собственный Telegram бот: поля `tenants.bot_token`, `tenants.bot_username`, `tenants.bot_enabled`.
+- `run_bot.py` запускает `BotManager`, который поднимает отдельный aiogram бот и Dispatcher для каждого tenant с включённым ботом.
+- Обработчики бота создаются через фабрики `create_user_router` / `create_admin_router` и получают tenant в контексте, без передачи slug от пользователя.
+- Изоляция: каждый бот оперирует только своим tenant_id, общих глобальных стейтов между ботами нет.

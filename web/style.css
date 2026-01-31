@@ -79,6 +79,12 @@ body {
   background: rgba(255,255,255,0.04);
   border: 1px dashed rgba(255,255,255,0.12);
 }
+.promo-qr img {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 12px;
+}
 .qr-placeholder {
   width: 80px;
   height: 80px;
@@ -92,6 +98,11 @@ body {
 }
 .promo-meta span { display: block; font-weight: 700; }
 .promo-meta small { color: #cbd5e1; }
+.promo-meta a {
+  color: #a5f3fc;
+  font-weight: 700;
+  text-decoration: none;
+}
 
 .content {
   background: var(--panel);
