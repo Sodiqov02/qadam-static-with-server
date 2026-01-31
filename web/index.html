@@ -111,6 +111,7 @@
     let menuCache = null;
     let promotions = [];
     let discountPercent = 0;
+    let tenantPlan = "basic";
     const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
 
     const tenantPath = (path) => (tenantSlug ? `/t/${tenantSlug}${path}` : path);
@@ -131,6 +132,7 @@
       const res = await fetch(tenantPath("/tenant"), { credentials: "same-origin" });
       if (!res.ok) return;
       const data = await res.json();
+      tenantPlan = data.plan || "basic";
       if (data.name) heroTitle.textContent = data.name;
       if (data.description) heroDesc.textContent = data.description;
       if (data.hero_image) {
@@ -138,6 +140,10 @@
         heroMedia.classList.remove("hero-fallback");
       } else {
         heroMedia.classList.add("hero-fallback");
+      }
+      if (tenantPlan === "basic") {
+        if (ordersLink) ordersLink.style.display = "none";
+        if (adminLink) adminLink.style.display = "none";
       }
     }
 
@@ -150,6 +156,7 @@
     }
 
     async function loadPromotions() {
+      if (tenantPlan === "basic") return;
       const url = tenantSlug ? `/api/promotions?tenant=${encodeURIComponent(tenantSlug)}` : "/api/promotions";
       const res = await fetch(url, { credentials: "same-origin" });
       if (!res.ok) return;

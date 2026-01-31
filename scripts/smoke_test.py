@@ -17,7 +17,12 @@ def ensure_tenant(slug: str, admin_chat_id: int | None = None) -> Tenant:
         tenant = session.query(Tenant).filter(Tenant.slug == slug).one_or_none()
         if tenant:
             return tenant
-        tenant = Tenant(slug=slug, name=f"{slug} tenant", admin_chat_id=admin_chat_id, features={"reservations": True})
+        tenant = Tenant(
+            slug=slug,
+            name=f"{slug} tenant",
+            admin_chat_id=admin_chat_id,
+            features={"reservations": True, "plan": "standard"},
+        )
         session.add(tenant)
         session.flush()
         return tenant
@@ -50,10 +55,14 @@ async def main():
         order = r2.json()
         print(f"Order created #{order['order_id']}")
 
-    ok = set_status(order["order_id"], "approved")
-    print(f"Status update approved: {ok}")
-    ok = set_status(order["order_id"], "done")
-    print(f"Status update done: {ok}")
+    ok = set_status(order["order_id"], "ACCEPTED")
+    print(f"Status update accepted: {ok}")
+    ok = set_status(order["order_id"], "COOKING")
+    print(f"Status update cooking: {ok}")
+    ok = set_status(order["order_id"], "READY")
+    print(f"Status update ready: {ok}")
+    ok = set_status(order["order_id"], "COMPLETED")
+    print(f"Status update completed: {ok}")
     print("Smoke test finished.")
 
 
