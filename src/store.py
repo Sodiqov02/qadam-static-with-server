@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -22,6 +23,7 @@ DEFAULT_TENANT_SLUG = "default"
 MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
 PLAN_ORDER = {"basic": 0, "standard": 1, "vip": 2}
 ORDER_STATUSES = ("NEW", "ACCEPTED", "COOKING", "READY", "COMPLETED", "CANCELED")
+COMPLETED_STATUSES = {"COMPLETED", "DONE", "APPROVED"}
 LEGACY_STATUS_MAP = {
     "new": "NEW",
     "approved": "ACCEPTED",
@@ -492,3 +494,57 @@ def is_admin_chat(chat_id: int) -> bool:
         return (
             session.execute(select(Tenant).where(Tenant.admin_chat_id == chat_id)).scalar_one_or_none() is not None
         )
+
+
+def _range_start(range_key: str) -> datetime:
+    now = datetime.utcnow()
+    key = (range_key or "").lower()
+    if key == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if key == "7d":
+        return now - timedelta(days=7)
+    if key == "30d":
+        return now - timedelta(days=30)
+    raise ValueError("Invalid range")
+
+
+def analytics_for_tenant(tenant: Tenant, range_key: str) -> dict:
+    start = _range_start(range_key)
+    with get_session() as session:
+        orders = session.execute(
+            select(Order)
+            .where(Order.tenant_id == tenant.id, Order.created_at >= start)
+            .order_by(Order.created_at.desc())
+        ).scalars().all()
+
+    orders_count = len(orders)
+    revenue = Decimal(0)
+    for order in orders:
+        status = normalize_status(order.status) or "NEW"
+        if status in COMPLETED_STATUSES:
+            revenue += Decimal(order.total or 0)
+    avg_check = (revenue / orders_count) if orders_count else Decimal(0)
+
+    price_map = _price_lookup(tenant)
+    item_stats: Dict[str, Dict[str, Any]] = {}
+    for order in orders:
+        for it in order.items or []:
+            item_id = str(it.get("item_id"))
+            qty = int(it.get("qty") or 0)
+            if qty <= 0:
+                continue
+            meta = price_map.get(item_id, {})
+            name = meta.get("name") or item_id
+            price = Decimal(meta.get("price") or 0)
+            stats = item_stats.setdefault(item_id, {"item_id": item_id, "name": name, "qty": 0, "revenue": 0})
+            stats["qty"] += qty
+            stats["revenue"] += int(price * qty)
+
+    top_items = sorted(item_stats.values(), key=lambda x: (x["qty"], x["revenue"]), reverse=True)[:5]
+    return {
+        "range": range_key,
+        "orders": orders_count,
+        "revenue": float(revenue),
+        "average_check": float(avg_check),
+        "top_items": top_items,
+    }

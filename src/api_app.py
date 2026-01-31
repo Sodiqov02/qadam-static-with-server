@@ -1,7 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import logging
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from src.notifier import notify_order_status_changed, notify_reservation_created
 from src.store import (
     DEFAULT_TENANT_SLUG,
     add_order,
+    analytics_for_tenant,
     create_reservation,
     ensure_default_tenant,
     get_menu_for_tenant,
@@ -23,6 +24,7 @@ from src.store import (
     update_order_status,
     tenant_plan,
     tenant_public_features,
+    tenant_has_plan,
     tenant_has_feature,
     update_reservation_status,
 )
@@ -85,6 +87,16 @@ def _default_tenant_dep():
 
 
 def _tenant_dep(slug: str):
+    tenant = get_tenant_by_slug(slug)
+    if not tenant:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
+    if not tenant.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tenant inactive")
+    return tenant
+
+
+def _resolve_admin_tenant(request: Request, tenant_slug: str | None):
+    slug = tenant_slug or request.headers.get("x-tenant-slug") or DEFAULT_TENANT_SLUG
     tenant = get_tenant_by_slug(slug)
     if not tenant:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
@@ -195,6 +207,17 @@ async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate
     if ok:
         await notify_reservation_updated(tenant, rid)
     return {"ok": True}
+
+
+@app.get("/api/admin/analytics")
+def admin_analytics(request: Request, range: str = "7d", tenant: str | None = None):
+    tenant_obj = _resolve_admin_tenant(request, tenant)
+    if not tenant_has_plan(tenant_obj, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include analytics")
+    try:
+        return analytics_for_tenant(tenant_obj, range)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid range")
 
 
 @app.patch("/api/admin/orders/{oid}/status")
