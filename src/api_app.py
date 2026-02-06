@@ -21,7 +21,7 @@ from src.store import (
     create_reservation,
     ensure_default_tenant,
     get_menu_for_tenant,
-    get_tenant_by_slug,
+    get_active_tenant_by_slug,
     get_order_for_tenant,
     list_reservations,
     list_promotions,
@@ -110,7 +110,7 @@ def _tenant_public(tenant):
 
 
 def _default_tenant_dep():
-    tenant = get_tenant_by_slug(DEFAULT_TENANT_SLUG)
+    tenant = get_active_tenant_by_slug(DEFAULT_TENANT_SLUG)
     if not tenant:
         tenant = ensure_default_tenant()
     if not tenant.is_active:
@@ -119,7 +119,7 @@ def _default_tenant_dep():
 
 
 def _tenant_dep(slug: str):
-    tenant = get_tenant_by_slug(slug)
+    tenant = get_active_tenant_by_slug(slug)
     if not tenant:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
     if not tenant.is_active:
@@ -129,7 +129,7 @@ def _tenant_dep(slug: str):
 
 def _resolve_tenant(request: Request, tenant_slug: str | None):
     slug = tenant_slug or request.headers.get("x-tenant-slug") or DEFAULT_TENANT_SLUG
-    tenant = get_tenant_by_slug(slug)
+    tenant = get_active_tenant_by_slug(slug)
     if not tenant:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
     if not tenant.is_active:

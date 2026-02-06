@@ -42,9 +42,14 @@ class BotManager:
     async def start(self) -> None:
         tenants = list_enabled_bot_tenants()
         if not tenants:
-            raise RuntimeError("No enabled tenants with bot_token")
+            logger.warning("no_enabled_tenants_with_bot_token")
+            return
         for tenant in tenants:
             if not tenant.bot_token:
+                logger.warning("skip_tenant_missing_bot_token tenant=%s", tenant.slug)
                 continue
             self._tasks.append(asyncio.create_task(self._run_bot(tenant)))
+        if not self._tasks:
+            logger.warning("no_bots_started")
+            return
         await asyncio.gather(*self._tasks, return_exceptions=True)

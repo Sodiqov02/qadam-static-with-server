@@ -185,6 +185,14 @@ def get_tenant_by_slug(slug: str) -> Optional[Tenant]:
         return session.execute(select(Tenant).where(Tenant.slug == slug)).scalar_one_or_none()
 
 
+def get_active_tenant_by_slug(slug: str) -> Optional[Tenant]:
+    with get_session() as session:
+        return (
+            session.execute(select(Tenant).where(Tenant.slug == slug, Tenant.is_active.is_(True)))
+            .scalar_one_or_none()
+        )
+
+
 def get_tenant_by_bot_token(token: str) -> Optional[Tenant]:
     if not token:
         return None
