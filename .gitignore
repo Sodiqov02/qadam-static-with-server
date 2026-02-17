@@ -20,6 +20,7 @@ env/
 # Python
 __pycache__/
 *.py[cod]
+*.pyc
 *$py.class
 *.so
 .Python
@@ -45,6 +46,9 @@ wheels/
 htmlcov/
 
 # Project specific
+alembic/versions/__pycache__/
+node_modules/
+*.sqlite3
 data/orders.json
 *.log
 *.err

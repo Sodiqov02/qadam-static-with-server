@@ -1,7 +1,8 @@
 from pathlib import Path
 from datetime import datetime, time
 import logging
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -10,16 +11,14 @@ from sqlalchemy import func, select
 from src.models import Menu, OrderIn, OrderOut
 from src.db import get_session, init_db
 from src.db_models import Tenant
-from src.notifier import notify_admin  # asynchronous notifier
+from src.notifier import notify_admin
 from src.notifier import notify_order_status_changed, notify_reservation_created, notify_reservation_updated
 from src.store import (
-    DEFAULT_TENANT_SLUG,
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
     create_promotion,
     create_reservation,
-    ensure_default_tenant,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
     get_order_for_tenant,
@@ -109,15 +108,6 @@ def _tenant_public(tenant):
     )
 
 
-def _default_tenant_dep():
-    tenant = get_active_tenant_by_slug(DEFAULT_TENANT_SLUG)
-    if not tenant:
-        tenant = ensure_default_tenant()
-    if not tenant.is_active:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tenant inactive")
-    return tenant
-
-
 def _tenant_dep(slug: str):
     tenant = get_active_tenant_by_slug(slug)
     if not tenant:
@@ -127,13 +117,17 @@ def _tenant_dep(slug: str):
     return tenant
 
 
-def _resolve_tenant(request: Request, tenant_slug: str | None):
-    slug = tenant_slug or request.headers.get("x-tenant-slug") or DEFAULT_TENANT_SLUG
-    tenant = get_active_tenant_by_slug(slug)
-    if not tenant:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
-    if not tenant.is_active:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tenant inactive")
+def _admin_tenant_dep(
+    slug: str,
+    tenant=Depends(_tenant_dep),
+    x_admin_chat_id: str | None = Header(default=None),
+):
+    if not x_admin_chat_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
+    if not tenant.admin_chat_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access not configured")
+    if str(tenant.admin_chat_id) != str(x_admin_chat_id).strip():
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access denied")
     return tenant
 
 
@@ -159,15 +153,11 @@ def _promo_to_dict(promo) -> dict:
 
 
 @app.on_event("startup")
-def ensure_default():
+def startup_checks():
     try:
         init_db()
     except Exception:
         logger.exception("init_db failed during startup")
-    try:
-        ensure_default_tenant()
-    except Exception:
-        logger.exception("ensure_default_tenant failed during startup")
     try:
         with get_session() as session:
             count = session.execute(select(func.count(Tenant.id))).scalar_one()
@@ -204,32 +194,13 @@ def serve_admin():
     return FileResponse(ADMIN_FILE)
 
 
-@app.get("/menu", response_model=Menu)
-def get_menu(default_tenant=Depends(_default_tenant_dep)):
-    logger.info("menu_request slug=%s", getattr(default_tenant, "slug", DEFAULT_TENANT_SLUG))
-    menu = get_menu_for_tenant(default_tenant)
-    return Menu.model_validate(menu)
-
-
-@app.get("/tenant", response_model=TenantPublic)
-def get_default_tenant(default_tenant=Depends(_default_tenant_dep)):
-    return _tenant_public(default_tenant)
-
-
-@app.post("/orders", response_model=OrderOut)
-async def create_order(order: OrderIn, default_tenant=Depends(_default_tenant_dep)):
-    oid = add_order(order.model_dump(), tenant=default_tenant)
-    try:
-        await notify_admin(oid)
-    except Exception:
-        pass
-    return OrderOut(order_id=oid)
-
-
 @app.get("/t/{slug}/menu", response_model=Menu)
 def get_menu_by_slug(slug: str, tenant=Depends(_tenant_dep)):
     logger.info("menu_request slug=%s", slug)
-    menu = get_menu_for_tenant(tenant)
+    try:
+        menu = get_menu_for_tenant(tenant)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return Menu.model_validate(menu)
 
 
@@ -239,17 +210,23 @@ def get_tenant_by_slug_public(slug: str, tenant=Depends(_tenant_dep)):
 
 
 @app.post("/t/{slug}/orders", response_model=OrderOut)
-async def create_order_by_slug(order: OrderIn, tenant=Depends(_tenant_dep)):
-    oid = add_order(order.model_dump(), tenant=tenant)
+async def create_order_by_slug(slug: str, order: OrderIn, tenant=Depends(_tenant_dep)):
+    try:
+        oid = add_order(order.model_dump(), tenant=tenant)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    logger.info("[TENANT=%s] Order created id=%s", slug, oid)
     try:
         await notify_admin(oid)
     except Exception:
-        pass
+        logger.exception("notify_admin_failed tenant=%s order_id=%s", slug, oid)
     return OrderOut(order_id=oid)
 
 
 @app.post("/t/{slug}/reservations")
 async def create_reservation_api(slug: str, reservation: ReservationIn, tenant=Depends(_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Feature disabled")
     rid = create_reservation(tenant, reservation.model_dump())
@@ -259,6 +236,8 @@ async def create_reservation_api(slug: str, reservation: ReservationIn, tenant=D
 
 @app.get("/t/{slug}/reservations")
 def list_reservations_api(slug: str, tenant=Depends(_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Feature disabled")
     return {"items": list_reservations(tenant)}
@@ -266,23 +245,26 @@ def list_reservations_api(slug: str, tenant=Depends(_tenant_dep)):
 
 @app.patch("/t/{slug}/reservations/{rid}")
 async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate, tenant=Depends(_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Feature disabled")
     ok = update_reservation_status(tenant, rid, payload.status)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Reservation not found")
-    if ok:
-        await notify_reservation_updated(tenant, rid)
+    await notify_reservation_updated(tenant, rid)
     return {"ok": True}
 
 
-@app.get("/api/orders/history")
-def order_history(request: Request, phone: str, tenant: str | None = None, limit: int = 20):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.get("/t/{slug}/api/orders/history")
+def order_history(slug: str, phone: str, limit: int = 20, tenant=Depends(_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include order history")
-    orders = list_orders_by_phone(tenant_obj, phone, limit=limit)
-    menu = get_menu_for_tenant(tenant_obj)
+    orders = list_orders_by_phone(tenant, phone, limit=limit)
+    try:
+        menu = get_menu_for_tenant(tenant)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     item_map = _item_map(menu)
     items = []
     for order in orders:
@@ -313,12 +295,11 @@ def order_history(request: Request, phone: str, tenant: str | None = None, limit
     return {"items": items}
 
 
-@app.post("/api/orders/{oid}/reorder")
-def reorder_order(oid: int, request: Request, phone: str, tenant: str | None = None):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.post("/t/{slug}/api/orders/{oid}/reorder")
+def reorder_order(slug: str, oid: int, phone: str, tenant=Depends(_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reorder")
-    order = get_order_for_tenant(tenant_obj, oid)
+    order = get_order_for_tenant(tenant, oid)
     if not order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     if not order.customer_phone or order.customer_phone != phone:
@@ -334,47 +315,47 @@ def reorder_order(oid: int, request: Request, phone: str, tenant: str | None = N
         "source": "reorder",
         "customer_chat_id": order.customer_chat_id,
     }
-    new_id = add_order(payload, tenant=tenant_obj)
+    try:
+        new_id = add_order(payload, tenant=tenant)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    logger.info("[TENANT=%s] Order created id=%s", slug, new_id)
     return {"order_id": new_id}
 
 
-@app.get("/api/promotions")
-def list_active_promotions(request: Request, tenant: str | None = None):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.get("/t/{slug}/api/promotions")
+def list_active_promotions(slug: str, tenant=Depends(_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
-    promos = active_promotions_for_tenant(tenant_obj)
+    promos = active_promotions_for_tenant(tenant)
     return {"items": [_promo_to_dict(p) for p in promos]}
 
 
-@app.get("/api/admin/promotions")
-def admin_list_promotions(request: Request, tenant: str | None = None):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.get("/t/{slug}/api/admin/promotions")
+def admin_list_promotions(slug: str, tenant=Depends(_admin_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
-    promos = list_promotions(tenant_obj, include_inactive=True)
+    promos = list_promotions(tenant, include_inactive=True)
     return {"items": [_promo_to_dict(p) for p in promos]}
 
 
-@app.post("/api/admin/promotions")
-def admin_create_promotion(payload: PromotionIn, request: Request, tenant: str | None = None):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.post("/t/{slug}/api/admin/promotions")
+def admin_create_promotion(slug: str, payload: PromotionIn, tenant=Depends(_admin_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
     try:
-        promo = create_promotion(tenant_obj, payload.model_dump())
+        promo = create_promotion(tenant, payload.model_dump())
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return _promo_to_dict(promo)
 
 
-@app.patch("/api/admin/promotions/{pid}")
-def admin_update_promotion(pid: int, payload: PromotionUpdate, request: Request, tenant: str | None = None):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.patch("/t/{slug}/api/admin/promotions/{pid}")
+def admin_update_promotion(slug: str, pid: int, payload: PromotionUpdate, tenant=Depends(_admin_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
     try:
-        promo = update_promotion(tenant_obj, pid, payload.model_dump(exclude_unset=True))
+        promo = update_promotion(tenant, pid, payload.model_dump(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except Exception:
@@ -382,23 +363,29 @@ def admin_update_promotion(pid: int, payload: PromotionUpdate, request: Request,
     return _promo_to_dict(promo)
 
 
-@app.get("/api/admin/analytics")
-def admin_analytics(request: Request, range: str = "7d", tenant: str | None = None):
-    tenant_obj = _resolve_tenant(request, tenant)
-    if not tenant_has_plan(tenant_obj, "standard"):
+@app.get("/t/{slug}/api/admin/analytics")
+def admin_analytics(slug: str, range: str = "7d", tenant=Depends(_admin_tenant_dep)):
+    if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include analytics")
     try:
-        return analytics_for_tenant(tenant_obj, range)
+        return analytics_for_tenant(tenant, range)
     except ValueError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid range")
 
 
-@app.patch("/api/admin/orders/{oid}/status")
-async def update_order_status_api(oid: int, payload: OrderStatusUpdate):
-    ok, order, _, prev, new = update_order_status(oid, payload.status, enforce_workflow=True)
+@app.patch("/t/{slug}/api/admin/orders/{oid}/status")
+async def update_order_status_api(slug: str, oid: int, payload: OrderStatusUpdate, tenant=Depends(_admin_tenant_dep)):
+    ok, order, _, prev, new = update_order_status(
+        oid,
+        payload.status,
+        tenant_id=tenant.id,
+        admin_chat_id=tenant.admin_chat_id,
+        enforce_workflow=True,
+    )
     if order is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     if not ok or not new:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid status transition or plan restriction")
     await notify_order_status_changed(order.id, prev, new)
+    logger.info("[TENANT=%s] Order status updated id=%s %s->%s", slug, oid, prev, new)
     return {"ok": True, "status": new}

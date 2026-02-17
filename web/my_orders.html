@@ -38,7 +38,11 @@
     const listEl = document.getElementById("orders-list");
 
     const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
-    const tenantParam = tenantSlug ? `&tenant=${encodeURIComponent(tenantSlug)}` : "";
+    const tenantRequiredError = "Tenant slug required. Open page as /my-orders?tenant=your-slug";
+    const tenantPath = (path) => {
+      if (!tenantSlug) throw new Error(tenantRequiredError);
+      return `/t/${encodeURIComponent(tenantSlug)}${path}`;
+    };
 
     const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
     const formatDate = (iso) => {
@@ -98,10 +102,14 @@
         statusEl.textContent = "Telefon raqamini kiriting.";
         return;
       }
+      if (!tenantSlug) {
+        statusEl.textContent = tenantRequiredError;
+        return;
+      }
       statusEl.textContent = "";
       loadBtn.disabled = true;
       try {
-        const res = await fetch(`/api/orders/history?phone=${encodeURIComponent(phone)}${tenantParam}`);
+        const res = await fetch(`${tenantPath("/api/orders/history")}?phone=${encodeURIComponent(phone)}`);
         if (res.status === 403) {
           statusEl.textContent = "Bu funksiya faqat Standard/VIP rejasida mavjud.";
           listEl.innerHTML = "";
@@ -119,8 +127,12 @@
 
     async function reorder(orderId, phone) {
       statusEl.textContent = "";
+      if (!tenantSlug) {
+        statusEl.textContent = tenantRequiredError;
+        return;
+      }
       try {
-        const res = await fetch(`/api/orders/${orderId}/reorder?phone=${encodeURIComponent(phone)}${tenantParam}`, {
+        const res = await fetch(`${tenantPath(`/api/orders/${orderId}/reorder`)}?phone=${encodeURIComponent(phone)}`, {
           method: "POST",
         });
         if (res.status === 403) {

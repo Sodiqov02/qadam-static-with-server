@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         ...,
         description="Database URL (postgresql+psycopg://...)",
     )
+    DEMO_MODE: bool = Field(default=False, description="Enable demo-only fallbacks like menu.json")
 
 
 settings = Settings()

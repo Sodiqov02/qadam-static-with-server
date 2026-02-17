@@ -117,8 +117,12 @@
     let discountPercent = 0;
     let tenantPlan = "basic";
     const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
+    const tenantRequiredError = "Tenant slug required. Open page as /?tenant=your-slug";
 
-    const tenantPath = (path) => (tenantSlug ? `/t/${tenantSlug}${path}` : path);
+    const tenantPath = (path) => {
+      if (!tenantSlug) throw new Error(tenantRequiredError);
+      return `/t/${encodeURIComponent(tenantSlug)}${path}`;
+    };
     if (ordersLink && tenantSlug) {
       ordersLink.href = `/my-orders?tenant=${encodeURIComponent(tenantSlug)}`;
     }
@@ -133,6 +137,10 @@
     };
 
     async function loadTenant() {
+      if (!tenantSlug) {
+        statusEl.textContent = tenantRequiredError;
+        return;
+      }
       const res = await fetch(tenantPath("/tenant"), { credentials: "same-origin" });
       if (!res.ok) return;
       const data = await res.json();
@@ -174,8 +182,9 @@
     }
 
     async function loadPromotions() {
+      if (!tenantSlug) return;
       if (tenantPlan === "basic") return;
-      const url = tenantSlug ? `/api/promotions?tenant=${encodeURIComponent(tenantSlug)}` : "/api/promotions";
+      const url = tenantPath("/api/promotions");
       const res = await fetch(url, { credentials: "same-origin" });
       if (!res.ok) return;
       const data = await res.json();
@@ -339,7 +348,7 @@
           },
           source: "site",
         };
-        const res = await fetch("/orders", {
+        const res = await fetch(tenantPath("/orders"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),

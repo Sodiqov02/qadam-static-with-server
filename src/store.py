@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import logging
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import NoResultFound
@@ -47,6 +48,7 @@ STATUS_TRANSITIONS = {
     "COMPLETED": set(),
     "CANCELED": set(),
 }
+logger = logging.getLogger(__name__)
 
 
 def _menu_fallback() -> dict:
@@ -176,7 +178,8 @@ def ensure_default_tenant() -> Tenant:
             session.flush()
             session.refresh(tenant)
             seeded_tenant = tenant
-    seed_demo_menu(seeded_tenant)
+    if settings.DEMO_MODE:
+        seed_demo_menu(seeded_tenant)
     return seeded_tenant
 
 
@@ -254,13 +257,14 @@ def get_menu_for_tenant(tenant: Tenant) -> dict:
     menu_from_db = _menu_from_db(tenant.id)
     if menu_from_db:
         menu = {"categories": menu_from_db}
-        if tenant.slug == DEFAULT_TENANT_SLUG:
+        if settings.DEMO_MODE and tenant.slug == DEFAULT_TENANT_SLUG:
             return _attach_demo_images(menu)
         return menu
-    # fallback for default tenant only
-    if tenant.slug == DEFAULT_TENANT_SLUG:
-        return _attach_demo_images(_menu_fallback())
-    return {"categories": []}
+    if settings.DEMO_MODE and tenant.slug == DEFAULT_TENANT_SLUG:
+        fallback = _attach_demo_images(_menu_fallback())
+        if fallback.get("categories"):
+            return fallback
+    raise ValueError("Menu is not configured for tenant")
 
 
 def import_menu_json(tenant: Tenant, menu_data: dict) -> None:
@@ -426,19 +430,28 @@ def _apply_promotions(tenant: Tenant, subtotal: Decimal) -> Tuple[Decimal, List[
     return (subtotal - discount_total).quantize(Decimal("0.01")), applied
 
 
-def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
-    tenant = tenant or ensure_default_tenant()
+def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
     price_map = _price_lookup(tenant)
     subtotal = Decimal(0)
     items_payload = []
+    unknown_items: List[str] = []
     for it in data.get("items", []):
         qty = int(it.get("qty") or 0)
         item_id = str(it.get("item_id"))
+        if qty <= 0:
+            raise ValueError("Item qty must be positive")
+        if item_id not in price_map:
+            unknown_items.append(item_id)
+            continue
         meta = price_map.get(item_id, {})
         price = Decimal(meta.get("price", 0))
         line_total = price * qty
         subtotal += line_total
         items_payload.append({"item_id": item_id, "qty": qty})
+    if unknown_items:
+        raise ValueError(f"Unknown item ids for tenant: {', '.join(unknown_items)}")
+    if not items_payload:
+        raise ValueError("Order must contain at least one item")
     subtotal = subtotal.quantize(Decimal("0.01"))
     total, applied_promos = _apply_promotions(tenant, subtotal)
     raw_payload = dict(data)
@@ -460,6 +473,7 @@ def add_order(data: Dict[str, Any], tenant: Optional[Tenant] = None) -> int:
     with get_session() as session:
         session.add(order)
         session.flush()
+        logger.info("[TENANT=%s] Order created id=%s source=%s", tenant.slug, order.id, order.source)
         return order.id
 
 
@@ -542,6 +556,7 @@ def update_order_status(
                 return False, order, tenant, current, target
 
         session.execute(update(Order).where(Order.id == oid).values(status=target))
+        logger.info("[TENANT=%s] Order status changed id=%s %s->%s", tenant.slug, oid, current, target)
         return True, order, tenant, current, target
 
 
@@ -625,6 +640,7 @@ def update_reservation_status(tenant: Tenant, rid: int, status: str) -> bool:
         if not res:
             return False
         res.status = status
+        logger.info("[TENANT=%s] Reservation status changed id=%s -> %s", tenant.slug, rid, status)
         return True
 
 

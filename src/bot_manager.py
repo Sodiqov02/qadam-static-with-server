@@ -44,10 +44,16 @@ class BotManager:
         if not tenants:
             logger.warning("no_enabled_tenants_with_bot_token")
             return
+        seen_tokens: set[str] = set()
         for tenant in tenants:
-            if not tenant.bot_token:
+            token = (tenant.bot_token or "").strip()
+            if not token:
                 logger.warning("skip_tenant_missing_bot_token tenant=%s", tenant.slug)
                 continue
+            if token in seen_tokens:
+                logger.error("skip_tenant_duplicate_bot_token tenant=%s", tenant.slug)
+                continue
+            seen_tokens.add(token)
             self._tasks.append(asyncio.create_task(self._run_bot(tenant)))
         if not self._tasks:
             logger.warning("no_bots_started")

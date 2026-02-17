@@ -104,8 +104,21 @@
   </div>
 
   <script>
-    const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
-    const tenantParam = tenantSlug ? `&tenant=${encodeURIComponent(tenantSlug)}` : "";
+    const params = new URLSearchParams(window.location.search);
+    const tenantSlug = params.get("tenant");
+    const adminChatId = params.get("admin_chat_id");
+    const tenantRequiredError = "tenant query param is required";
+    const adminRequiredError = "admin_chat_id query param is required";
+
+    const tenantPath = (path) => {
+      if (!tenantSlug) throw new Error(tenantRequiredError);
+      return `/t/${encodeURIComponent(tenantSlug)}${path}`;
+    };
+
+    const adminHeaders = (extra = {}) => {
+      if (!adminChatId) throw new Error(adminRequiredError);
+      return { ...extra, "x-admin-chat-id": String(adminChatId) };
+    };
 
     const ordersEl = document.getElementById("stat-orders");
     const revenueEl = document.getElementById("stat-revenue");
@@ -121,9 +134,19 @@
 
     async function loadAnalytics(range = "7d") {
       analyticsStatus.textContent = "";
-      const res = await fetch(`/api/admin/analytics?range=${range}${tenantParam}`);
+      if (!tenantSlug) {
+        analyticsStatus.textContent = tenantRequiredError;
+        return;
+      }
+      if (!adminChatId) {
+        analyticsStatus.textContent = adminRequiredError;
+        return;
+      }
+      const res = await fetch(`${tenantPath("/api/admin/analytics")}?range=${encodeURIComponent(range)}`, {
+        headers: adminHeaders(),
+      });
       if (res.status === 403) {
-        analyticsStatus.textContent = "Analytics Standard/VIP rejasida mavjud.";
+        analyticsStatus.textContent = "Analytics unavailable for current plan or admin access.";
         return;
       }
       if (!res.ok) {
@@ -144,9 +167,17 @@
 
     async function loadPromotions() {
       promoStatus.textContent = "";
-      const res = await fetch(`/api/admin/promotions?tenant=${encodeURIComponent(tenantSlug || "")}`);
+      if (!tenantSlug) {
+        promoStatus.textContent = tenantRequiredError;
+        return;
+      }
+      if (!adminChatId) {
+        promoStatus.textContent = adminRequiredError;
+        return;
+      }
+      const res = await fetch(tenantPath("/api/admin/promotions"), { headers: adminHeaders() });
       if (res.status === 403) {
-        promoStatus.textContent = "Promotions Standard/VIP rejasida mavjud.";
+        promoStatus.textContent = "Promotions unavailable for current plan or admin access.";
         return;
       }
       if (!res.ok) {
@@ -191,9 +222,9 @@
     }
 
     async function updatePromo(id, payload) {
-      const res = await fetch(`/api/admin/promotions/${id}?tenant=${encodeURIComponent(tenantSlug || "")}` , {
+      const res = await fetch(tenantPath(`/api/admin/promotions/${id}`), {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -204,6 +235,15 @@
     promoForm.addEventListener("submit", async (evt) => {
       evt.preventDefault();
       promoStatus.textContent = "";
+      if (!tenantSlug) {
+        promoStatus.textContent = tenantRequiredError;
+        return;
+      }
+      if (!adminChatId) {
+        promoStatus.textContent = adminRequiredError;
+        return;
+      }
+
       const type = document.getElementById("promo-type").value;
       const productId = document.getElementById("promo-product").value;
       const discount = document.getElementById("promo-discount").value;
@@ -221,9 +261,9 @@
         is_active: true,
       };
 
-      const res = await fetch(`/api/admin/promotions?tenant=${encodeURIComponent(tenantSlug || "")}`, {
+      const res = await fetch(tenantPath("/api/admin/promotions"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       if (!res.ok) {

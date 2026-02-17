@@ -1,4 +1,5 @@
 from typing import Optional
+import logging
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
@@ -7,6 +8,7 @@ from src.db_models import Tenant
 from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_has_plan
 
 _bot_cache: dict[str, Bot] = {}
+logger = logging.getLogger(__name__)
 
 
 def _tget(obj, key, default=None):
@@ -37,6 +39,7 @@ async def _safe_send(bot: Bot | None, chat_id: int, text: str) -> None:
     try:
         await bot.send_message(chat_id=chat_id, text=text)
     except Exception:
+        logger.exception("bot_notify_failed chat_id=%s", chat_id)
         return
 
 
