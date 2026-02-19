@@ -197,7 +197,7 @@ def create_user_router(tenant: Tenant) -> Router:
 
     @router.callback_query(lambda c: c.data == "cart")
     async def cart_callback(callback: CallbackQuery, state: FSMContext):
-        if not callback.from_user or not callback.message:
+        if not callback.from_user or not  callback.message:
             return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
         user_id = callback.from_user.id
         cart = _cart_for(user_id)
