@@ -1,5 +1,4 @@
 aiogram>=3.2.0
-Flask>=3.0.0
 python-dotenv>=1.0.0
 fastapi>=0.110.0
 uvicorn>=0.23.0
@@ -9,4 +8,3 @@ pydantic-settings>=2.2.0
 SQLAlchemy>=2.0.29
 alembic>=1.13.1
 psycopg[binary]>=3.1.9
-psycopg2-binary>=2.9.9

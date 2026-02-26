@@ -35,12 +35,12 @@ def create_admin_router(tenant: Tenant) -> Router:
         ok, order, _, prev, new = update_order_status(
             oid,
             "ACCEPTED",
-            admin_chat_id=message.chat.id if message.chat else None,
             tenant_id=tenant.id,
+            admin_chat_id=message.chat.id if message.chat else None,
             enforce_workflow=True,
         )
         if ok and order and new:
-            await notify_order_status_changed(order.id, prev, new)
+            await notify_order_status_changed(order.id, tenant.id, prev, new)
         await message.answer("Tasdiqlandi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("reject"))
@@ -55,12 +55,12 @@ def create_admin_router(tenant: Tenant) -> Router:
         ok, order, _, prev, new = update_order_status(
             oid,
             "CANCELED",
-            admin_chat_id=message.chat.id if message.chat else None,
             tenant_id=tenant.id,
+            admin_chat_id=message.chat.id if message.chat else None,
             enforce_workflow=True,
         )
         if ok and order and new:
-            await notify_order_status_changed(order.id, prev, new)
+            await notify_order_status_changed(order.id, tenant.id, prev, new)
         await message.answer("Rad etildi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("done"))
@@ -75,12 +75,12 @@ def create_admin_router(tenant: Tenant) -> Router:
         ok, order, _, prev, new = update_order_status(
             oid,
             "COMPLETED",
-            admin_chat_id=message.chat.id if message.chat else None,
             tenant_id=tenant.id,
+            admin_chat_id=message.chat.id if message.chat else None,
             enforce_workflow=True,
         )
         if ok and order and new:
-            await notify_order_status_changed(order.id, prev, new)
+            await notify_order_status_changed(order.id, tenant.id, prev, new)
         await message.answer("Yakunlandi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
 
     return router

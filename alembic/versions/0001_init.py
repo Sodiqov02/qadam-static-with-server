@@ -22,22 +22,15 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
     )
-    op.execute(
-        "INSERT INTO tenants (slug, name, admin_chat_id, features, is_active) "
-        "VALUES ('default', 'Default tenant', NULL, '{}'::jsonb, TRUE)"
-        if op.get_bind() and op.get_bind().dialect.name == "postgresql"
-        else "INSERT INTO tenants (slug, name, admin_chat_id, features, is_active) VALUES ('default', 'Default tenant', NULL, '{}', 1)"
-    )
-
     op.create_table(
         "menu_categories",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False),
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("sort", sa.Integer(), nullable=False, server_default="0"),
+        sa.UniqueConstraint("tenant_id", "title", name="uq_category_title_per_tenant"),
     )
     op.create_index("ix_menu_categories_tenant_id", "menu_categories", ["tenant_id"])
-    op.create_unique_constraint("uq_category_title_per_tenant", "menu_categories", ["tenant_id", "title"])
 
     op.create_table(
         "menu_items",

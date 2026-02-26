@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="uz">
 <head>
   <meta charset="UTF-8" />
@@ -14,7 +14,7 @@
           <p class="eyebrow">Shaxsiy</p>
           <h2>My Orders</h2>
         </div>
-        <a class="ghost-btn" href="/">Back to menu</a>
+        <a class="ghost-btn" id="back-to-menu" href="/">Back to menu</a>
       </header>
 
       <section class="orders-panel">
@@ -37,12 +37,17 @@
     const statusEl = document.getElementById("orders-status");
     const listEl = document.getElementById("orders-list");
 
-    const tenantSlug = new URLSearchParams(window.location.search).get("tenant");
-    const tenantRequiredError = "Tenant slug required. Open page as /my-orders?tenant=your-slug";
+    const tenantSlug = decodeURIComponent(window.location.pathname.split("/")[2] || "");
+    const tenantRequiredError = "Tenant slug required. Open page as /t/<slug>/my-orders";
     const tenantPath = (path) => {
       if (!tenantSlug) throw new Error(tenantRequiredError);
       return `/t/${encodeURIComponent(tenantSlug)}${path}`;
     };
+
+    const backLink = document.getElementById("back-to-menu");
+    if (backLink && tenantSlug) {
+      backLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
+    }
 
     const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
     const formatDate = (iso) => {
@@ -54,7 +59,7 @@
     function renderOrders(items, phone) {
       listEl.innerHTML = "";
       if (!items.length) {
-        listEl.innerHTML = "<p class=\"muted\">Buyurtmalar topilmadi.</p>";
+        listEl.innerHTML = '<p class="muted">Buyurtmalar topilmadi.</p>';
         return;
       }
       items.forEach((order) => {
@@ -63,7 +68,7 @@
 
         const header = document.createElement("div");
         header.className = "orders-card-head";
-        header.innerHTML = `<div><strong>#${order.id}</strong><div class=\"muted\">${formatDate(order.created_at)}</div></div>`;
+        header.innerHTML = `<div><strong>#${order.id}</strong><div class="muted">${formatDate(order.created_at)}</div></div>`;
 
         const status = document.createElement("span");
         status.className = "status-pill";
@@ -74,7 +79,7 @@
         itemsList.className = "orders-items";
         (order.items || []).forEach((it) => {
           const li = document.createElement("li");
-          li.textContent = `${it.name} x${it.qty} � ${formatPrice(it.line_total)}`;
+          li.textContent = `${it.name} x${it.qty} · ${formatPrice(it.line_total)}`;
           itemsList.appendChild(li);
         });
 

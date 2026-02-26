@@ -1,14 +1,11 @@
-import json
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import logging
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import NoResultFound
 
-from src.config import settings
 from src.db import get_session
 from src.db_models import (
     BotUser,
@@ -17,12 +14,9 @@ from src.db_models import (
     Order,
     Promotion,
     Reservation,
-    Table,
     Tenant,
 )
 
-DEFAULT_TENANT_SLUG = "default"
-MENU_PATH = Path(__file__).resolve().parents[1] / "data" / "menu.json"
 PLAN_ORDER = {"basic": 0, "standard": 1, "vip": 2}
 ORDER_STATUSES = ("NEW", "ACCEPTED", "COOKING", "READY", "COMPLETED", "CANCELED")
 COMPLETED_STATUSES = {"COMPLETED", "DONE", "APPROVED"}
@@ -49,138 +43,6 @@ STATUS_TRANSITIONS = {
     "CANCELED": set(),
 }
 logger = logging.getLogger(__name__)
-
-
-def _menu_fallback() -> dict:
-    try:
-        return json.loads(MENU_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _demo_image_map() -> Dict[str, str]:
-    demo_menu = _menu_fallback()
-    mapping: Dict[str, str] = {}
-    for cat in demo_menu.get("categories", []):
-        for it in cat.get("items", []):
-            name = (it.get("name") or it.get("title") or "").strip().lower()
-            image_url = (it.get("image_url") or "").strip()
-            if name and image_url and name not in mapping:
-                mapping[name] = image_url
-    return mapping
-
-
-def _attach_demo_images(menu: dict) -> dict:
-    image_map = _demo_image_map()
-    if not image_map:
-        return menu
-    for cat in menu.get("categories", []):
-        for it in cat.get("items", []):
-            if it.get("image_url"):
-                continue
-            name = (it.get("name") or "").strip().lower()
-            if name and name in image_map:
-                it["image_url"] = image_map[name]
-    return menu
-
-
-def seed_demo_menu(tenant: Tenant) -> bool:
-    demo_menu = _menu_fallback()
-    categories = demo_menu.get("categories") or []
-    if not categories:
-        return False
-
-    with get_session() as session:
-        has_category = (
-            session.execute(
-                select(MenuCategory.id).where(MenuCategory.tenant_id == tenant.id).limit(1)
-            ).scalar_one_or_none()
-            is not None
-        )
-        has_item = (
-            session.execute(select(MenuItem.id).where(MenuItem.tenant_id == tenant.id).limit(1)).scalar_one_or_none()
-            is not None
-        )
-        if has_category and has_item:
-            return False
-
-        if not has_category:
-            for idx, cat in enumerate(categories):
-                category = MenuCategory(
-                    tenant_id=tenant.id,
-                    title=cat.get("title") or f"Category {idx+1}",
-                    sort=idx,
-                )
-                session.add(category)
-                session.flush()
-                for jdx, item in enumerate(cat.get("items") or []):
-                    session.add(
-                        MenuItem(
-                            tenant_id=tenant.id,
-                            category_id=category.id,
-                            title=item.get("name") or item.get("title") or f"Item {jdx+1}",
-                            price=int(item.get("price") or 0),
-                            description=item.get("description"),
-                            sort=jdx,
-                            is_active=True,
-                        )
-                    )
-            return True
-
-        first_category_id = session.execute(
-            select(MenuCategory.id)
-            .where(MenuCategory.tenant_id == tenant.id)
-            .order_by(MenuCategory.id)
-            .limit(1)
-        ).scalar_one_or_none()
-        if not first_category_id:
-            return False
-
-        seed_items = categories[0].get("items") or []
-        if not seed_items:
-            return False
-        for jdx, item in enumerate(seed_items):
-            session.add(
-                MenuItem(
-                    tenant_id=tenant.id,
-                    category_id=first_category_id,
-                    title=item.get("name") or item.get("title") or f"Item {jdx+1}",
-                    price=int(item.get("price") or 0),
-                    description=item.get("description"),
-                    sort=jdx,
-                    is_active=True,
-                )
-            )
-        return True
-
-
-def ensure_default_tenant() -> Tenant:
-    with get_session() as session:
-        tenant = session.execute(select(Tenant).where(Tenant.slug == DEFAULT_TENANT_SLUG)).scalar_one_or_none()
-        if tenant:
-            if not tenant.admin_chat_id and getattr(settings, "ADMIN_CHAT_ID", None):
-                tenant.admin_chat_id = settings.ADMIN_CHAT_ID
-            if not isinstance(tenant.features, dict):
-                tenant.features = {}
-            if not tenant.features.get("plan"):
-                tenant.features["plan"] = "basic"
-            session.flush()
-            session.refresh(tenant)
-            seeded_tenant = tenant
-        else:
-            tenant = Tenant(
-                slug=DEFAULT_TENANT_SLUG,
-                name="Default tenant",
-                features={"plan": "basic"},
-                admin_chat_id=getattr(settings, "ADMIN_CHAT_ID", None),
-            )
-            session.add(tenant)
-            session.flush()
-            session.refresh(tenant)
-            seeded_tenant = tenant
-    if settings.DEMO_MODE:
-        seed_demo_menu(seeded_tenant)
-    return seeded_tenant
 
 
 def get_tenant_by_slug(slug: str) -> Optional[Tenant]:
@@ -217,6 +79,90 @@ def list_enabled_bot_tenants() -> List[Tenant]:
         )
 
 
+def bootstrap_tenant(
+    *,
+    slug: str,
+    name: str,
+    admin_chat_id: int | None,
+    bot_token: str | None,
+    bot_username: str | None,
+    bot_enabled: bool,
+    features: Dict[str, Any] | None = None,
+    category_titles: Iterable[str] | None = None,
+) -> Dict[str, Any]:
+    feature_flags = features or {}
+    normalized_categories = [x.strip() for x in (category_titles or []) if isinstance(x, str) and x.strip()]
+    if not normalized_categories:
+        normalized_categories = ["Main"]
+
+    with get_session() as session:
+        tenant = session.execute(select(Tenant).where(Tenant.slug == slug)).scalar_one_or_none()
+        created = tenant is None
+        if tenant is None:
+            tenant = Tenant(
+                slug=slug,
+                name=name,
+                admin_chat_id=admin_chat_id,
+                bot_token=bot_token,
+                bot_username=bot_username,
+                bot_enabled=bot_enabled,
+                features=feature_flags,
+                is_active=True,
+            )
+            session.add(tenant)
+            session.flush()
+        else:
+            tenant.name = name or tenant.name
+            tenant.admin_chat_id = admin_chat_id
+            if bot_token is not None:
+                tenant.bot_token = bot_token
+            if bot_username is not None:
+                tenant.bot_username = bot_username
+            tenant.bot_enabled = bot_enabled
+            merged_features: Dict[str, Any] = {}
+            if isinstance(tenant.features, dict):
+                merged_features.update(tenant.features)
+            merged_features.update(feature_flags)
+            tenant.features = merged_features
+            tenant.is_active = True
+            session.flush()
+
+        existing_titles = {
+            row[0]
+            for row in session.execute(
+                select(MenuCategory.title).where(MenuCategory.tenant_id == tenant.id)
+            ).all()
+        }
+        categories_created = 0
+        next_sort = session.execute(
+            select(MenuCategory.sort)
+            .where(MenuCategory.tenant_id == tenant.id)
+            .order_by(MenuCategory.sort.desc(), MenuCategory.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        sort_value = int(next_sort or -1) + 1
+        for title in normalized_categories:
+            if title in existing_titles:
+                continue
+            session.add(
+                MenuCategory(
+                    tenant_id=tenant.id,
+                    title=title,
+                    sort=sort_value,
+                )
+            )
+            sort_value += 1
+            categories_created += 1
+
+        session.flush()
+        return {
+            "tenant_id": tenant.id,
+            "slug": tenant.slug,
+            "created": created,
+            "categories_created": categories_created,
+        }
+
+
 def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
     with get_session() as session:
         categories = session.execute(
@@ -233,8 +179,6 @@ def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
         result = []
         for cat in categories:
             cat_items = sorted(items_by_cat.get(cat.id, []), key=lambda x: (x.sort, x.id))
-            if not cat_items:
-                continue
             result.append(
                 {
                     "id": str(cat.id),
@@ -255,43 +199,9 @@ def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
 
 def get_menu_for_tenant(tenant: Tenant) -> dict:
     menu_from_db = _menu_from_db(tenant.id)
-    if menu_from_db:
-        menu = {"categories": menu_from_db}
-        if settings.DEMO_MODE and tenant.slug == DEFAULT_TENANT_SLUG:
-            return _attach_demo_images(menu)
-        return menu
-    if settings.DEMO_MODE and tenant.slug == DEFAULT_TENANT_SLUG:
-        fallback = _attach_demo_images(_menu_fallback())
-        if fallback.get("categories"):
-            return fallback
-    raise ValueError("Menu is not configured for tenant")
-
-
-def import_menu_json(tenant: Tenant, menu_data: dict) -> None:
-    categories = menu_data.get("categories") or []
-    with get_session() as session:
-        tenant_db = session.execute(select(Tenant).where(Tenant.id == tenant.id)).scalar_one_or_none()
-        if not tenant_db:
-            raise ValueError("Tenant not found for import")
-        session.query(MenuItem).filter(MenuItem.tenant_id == tenant.id).delete()
-        session.query(MenuCategory).filter(MenuCategory.tenant_id == tenant.id).delete()
-        session.flush()
-        for idx, cat in enumerate(categories):
-            category = MenuCategory(tenant_id=tenant.id, title=cat.get("title") or f"Category {idx+1}", sort=idx)
-            session.add(category)
-            session.flush()
-            for jdx, item in enumerate(cat.get("items") or []):
-                session.add(
-                    MenuItem(
-                        tenant_id=tenant.id,
-                        category_id=category.id,
-                        title=item.get("name") or item.get("title") or f"Item {jdx+1}",
-                        price=int(item.get("price") or 0),
-                        description=item.get("description"),
-                        sort=jdx,
-                        is_active=True,
-                    )
-                )
+    if not menu_from_db:
+        raise ValueError("Menu is not configured for tenant")
+    return {"categories": menu_from_db}
 
 
 def _price_lookup(tenant: Tenant) -> Dict[str, Dict[str, Any]]:
@@ -320,6 +230,19 @@ def list_promotions(tenant: Tenant, include_inactive: bool = False) -> List[Prom
         if not include_inactive:
             query = query.where(Promotion.is_active.is_(True))
         return session.execute(query.order_by(Promotion.created_at.desc())).scalars().all()
+
+
+def serialize_promotion(promo: Promotion) -> Dict[str, Any]:
+    return {
+        "id": promo.id,
+        "type": promo.type,
+        "is_active": promo.is_active,
+        "product_id": promo.product_id,
+        "discount_percent": promo.discount_percent,
+        "start_time": promo.start_time.isoformat() if promo.start_time else None,
+        "end_time": promo.end_time.isoformat() if promo.end_time else None,
+        "days_of_week": promo.days_of_week,
+    }
 
 
 def active_promotions_for_tenant(tenant: Tenant) -> List[Promotion]:
@@ -477,11 +400,14 @@ def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
         return order.id
 
 
-def get_order(oid: int) -> Optional[Dict[str, Any]]:
+def get_order(oid: int, tenant_id: int) -> Optional[Dict[str, Any]]:
     with get_session() as session:
-        row = session.execute(
-            select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
-        ).first()
+        query = (
+            select(Order, Tenant)
+            .join(Tenant, Tenant.id == Order.tenant_id)
+            .where(Order.id == oid, Order.tenant_id == tenant_id)
+        )
+        row = session.execute(query).first()
         if not row:
             return None
         order, tenant = row
@@ -525,15 +451,17 @@ def _transition_allowed(current: str, target: str) -> bool:
 def update_order_status(
     oid: int,
     status: str,
+    tenant_id: int,
     admin_chat_id: Optional[int] = None,
-    tenant_id: Optional[int] = None,
     *,
     enforce_workflow: bool = True,
 ) -> Tuple[bool, Optional[Order], Optional[Tenant], Optional[str], Optional[str]]:
     with get_session() as session:
-        query = select(Order, Tenant).join(Tenant, Tenant.id == Order.tenant_id).where(Order.id == oid)
-        if tenant_id is not None:
-            query = query.where(Order.tenant_id == tenant_id)
+        query = (
+            select(Order, Tenant)
+            .join(Tenant, Tenant.id == Order.tenant_id)
+            .where(Order.id == oid, Order.tenant_id == tenant_id)
+        )
         row = session.execute(query).first()
         if not row:
             return False, None, None, None, None
@@ -558,11 +486,6 @@ def update_order_status(
         session.execute(update(Order).where(Order.id == oid).values(status=target))
         logger.info("[TENANT=%s] Order status changed id=%s %s->%s", tenant.slug, oid, current, target)
         return True, order, tenant, current, target
-
-
-def set_status(oid: int, status: str, admin_chat_id: Optional[int] = None) -> bool:
-    ok, _, _, _, _ = update_order_status(oid, status, admin_chat_id=admin_chat_id, enforce_workflow=True)
-    return ok
 
 
 def tenant_has_feature(tenant: Tenant, feature: str) -> bool:
@@ -748,3 +671,55 @@ def get_order_for_tenant(tenant: Tenant, oid: int) -> Optional[Order]:
             .scalars()
             .first()
         )
+
+
+def order_history_for_phone(tenant: Tenant, phone: str, limit: int = 20) -> List[Dict[str, Any]]:
+    orders = list_orders_by_phone(tenant, phone, limit=limit)
+    item_map = _price_lookup(tenant)
+    result: List[Dict[str, Any]] = []
+    for order in orders:
+        order_items = []
+        for item in order.items or []:
+            item_id = str(item.get("item_id"))
+            qty = int(item.get("qty") or 0)
+            meta = item_map.get(item_id, {})
+            price = int(meta.get("price") or 0)
+            order_items.append(
+                {
+                    "item_id": item_id,
+                    "name": meta.get("name") or item_id,
+                    "qty": qty,
+                    "price": price,
+                    "line_total": price * qty,
+                }
+            )
+        result.append(
+            {
+                "id": order.id,
+                "status": order.status,
+                "total": float(order.total or 0),
+                "created_at": order.created_at.isoformat() if order.created_at else None,
+                "items": order_items,
+            }
+        )
+    return result
+
+
+def create_reorder_for_phone(tenant: Tenant, oid: int, phone: str) -> int:
+    order = get_order_for_tenant(tenant, oid)
+    if not order:
+        raise LookupError("Order not found")
+    if not order.customer_phone or order.customer_phone != phone:
+        raise PermissionError("Customer phone mismatch")
+    payload = {
+        "items": order.items or [],
+        "customer": {
+            "name": order.customer_name or "",
+            "phone": order.customer_phone or "",
+            "address": order.customer_address or "",
+            "comment": "Reorder",
+        },
+        "source": "site",
+        "customer_chat_id": order.customer_chat_id,
+    }
+    return add_order(payload, tenant=tenant)

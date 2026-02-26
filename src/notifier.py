@@ -3,21 +3,11 @@ import logging
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
-from src.config import settings
 from src.db_models import Tenant
 from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_has_plan
 
 _bot_cache: dict[str, Bot] = {}
 logger = logging.getLogger(__name__)
-
-
-def _tget(obj, key, default=None):
-    # Works for both dict-like and attribute objects (Tenant)
-    if obj is None:
-        return default
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
 
 
 def _get_bot_for_tenant(tenant: Tenant | None) -> Optional[Bot]:
@@ -59,17 +49,15 @@ def _price_lookup(order: dict) -> dict:
 
 
 def _resolve_admin_chat_id(tenant: Tenant | None) -> int | None:
-    chat_id = _tget(tenant, "admin_chat_id")
-    if chat_id:
-        return int(chat_id)
-    if settings.ADMIN_CHAT_ID:
-        return int(settings.ADMIN_CHAT_ID)
-    return None
+    if not tenant:
+        return None
+    chat_id = getattr(tenant, "admin_chat_id", None)
+    return int(chat_id) if chat_id else None
 
 
-async def notify_admin(order_id: int):
+async def notify_admin(order_id: int, tenant_id: int):
     """Send a short order notification to the admin chat for the order's tenant."""
-    order = get_order(order_id)
+    order = get_order(order_id, tenant_id=tenant_id)
     if not order:
         return
     tenant = order.get("tenant")
@@ -163,8 +151,13 @@ async def notify_reservation_updated(tenant: Tenant, rid: int):
     await _safe_send(bot, int(chat_id), text)
 
 
-async def notify_order_status_changed(order_id: int, old_status: str | None, new_status: str) -> None:
-    order = get_order(order_id)
+async def notify_order_status_changed(
+    order_id: int,
+    tenant_id: int,
+    old_status: str | None,
+    new_status: str,
+) -> None:
+    order = get_order(order_id, tenant_id=tenant_id)
     if not order:
         return
     tenant = order.get("tenant")

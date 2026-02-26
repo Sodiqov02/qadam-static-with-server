@@ -49,6 +49,7 @@ htmlcov/
 alembic/versions/__pycache__/
 node_modules/
 *.sqlite3
+*.db
 data/orders.json
 *.log
 *.err

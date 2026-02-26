@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="uz">
 <head>
   <meta charset="UTF-8" />
@@ -57,7 +57,7 @@
             <p class="eyebrow">Promotions</p>
             <h2>Manage</h2>
           </div>
-          <a class="ghost-btn" href="/">Back to menu</a>
+          <a class="ghost-btn" id="back-to-menu" href="/">Back to menu</a>
         </header>
 
         <form id="promo-form" class="form">
@@ -104,10 +104,9 @@
   </div>
 
   <script>
-    const params = new URLSearchParams(window.location.search);
-    const tenantSlug = params.get("tenant");
-    const adminChatId = params.get("admin_chat_id");
-    const tenantRequiredError = "tenant query param is required";
+    const tenantSlug = decodeURIComponent(window.location.pathname.split("/")[2] || "");
+    const adminChatId = new URLSearchParams(window.location.search).get("admin_chat_id");
+    const tenantRequiredError = "Tenant slug required. Open page as /t/<slug>/admin";
     const adminRequiredError = "admin_chat_id query param is required";
 
     const tenantPath = (path) => {
@@ -119,6 +118,11 @@
       if (!adminChatId) throw new Error(adminRequiredError);
       return { ...extra, "x-admin-chat-id": String(adminChatId) };
     };
+
+    const backLink = document.getElementById("back-to-menu");
+    if (backLink && tenantSlug) {
+      backLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
+    }
 
     const ordersEl = document.getElementById("stat-orders");
     const revenueEl = document.getElementById("stat-revenue");
@@ -191,7 +195,7 @@
     function renderPromotions(items) {
       promoList.innerHTML = "";
       if (!items.length) {
-        promoList.innerHTML = "<p class=\"muted\">Promo yo'q</p>";
+        promoList.innerHTML = '<p class="muted">Promo yo\'q</p>';
         return;
       }
       items.forEach((promo) => {
@@ -199,7 +203,7 @@
         card.className = "orders-card";
         card.innerHTML = `
           <div class="orders-card-head">
-            <div><strong>#${promo.id}</strong> � ${promo.type}</div>
+            <div><strong>#${promo.id}</strong> · ${promo.type}</div>
             <span class="status-pill">${promo.is_active ? "Active" : "Inactive"}</span>
           </div>
           <div class="muted">Product: ${promo.product_id || "-"} | Discount: ${promo.discount_percent || 0}%</div>

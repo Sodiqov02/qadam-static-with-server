@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from src.models import Menu, OrderIn, OrderOut
-from src.db import get_session, init_db
+from src.db import get_session
 from src.db_models import Tenant
 from src.notifier import notify_admin
 from src.notifier import notify_order_status_changed, notify_reservation_created, notify_reservation_updated
@@ -17,14 +17,15 @@ from src.store import (
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
+    create_reorder_for_phone,
     create_promotion,
     create_reservation,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
-    get_order_for_tenant,
+    order_history_for_phone,
     list_reservations,
     list_promotions,
-    list_orders_by_phone,
+    serialize_promotion,
     update_order_status,
     update_promotion,
     tenant_plan,
@@ -38,7 +39,6 @@ app = FastAPI(title="Qadam API")
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 INDEX_FILE = WEB_DIR / "index.html"
-STYLE_FILE = WEB_DIR / "style.css"
 MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 ADMIN_FILE = WEB_DIR / "admin.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
@@ -131,33 +131,8 @@ def _admin_tenant_dep(
     return tenant
 
 
-def _item_map(menu: dict) -> dict:
-    mapping = {}
-    for cat in menu.get("categories", []):
-        for it in cat.get("items", []):
-            mapping[str(it.get("id"))] = it
-    return mapping
-
-
-def _promo_to_dict(promo) -> dict:
-    return {
-        "id": promo.id,
-        "type": promo.type,
-        "is_active": promo.is_active,
-        "product_id": promo.product_id,
-        "discount_percent": promo.discount_percent,
-        "start_time": promo.start_time.isoformat() if promo.start_time else None,
-        "end_time": promo.end_time.isoformat() if promo.end_time else None,
-        "days_of_week": promo.days_of_week,
-    }
-
-
 @app.on_event("startup")
 def startup_checks():
-    try:
-        init_db()
-    except Exception:
-        logger.exception("init_db failed during startup")
     try:
         with get_session() as session:
             count = session.execute(select(func.count(Tenant.id))).scalar_one()
@@ -173,11 +148,19 @@ def serve_index():
     return FileResponse(INDEX_FILE)
 
 
-@app.get("/style.css", include_in_schema=False)
-def serve_style():
-    if not STYLE_FILE.exists():
-        raise HTTPException(404, "Style not found")
-    return FileResponse(STYLE_FILE, media_type="text/css")
+@app.get("/t/{slug}", include_in_schema=False)
+def serve_tenant_page(slug: str):
+    return FileResponse(INDEX_FILE)
+
+
+@app.get("/t/{slug}/my-orders", include_in_schema=False)
+def serve_tenant_my_orders(slug: str):
+    return FileResponse(MY_ORDERS_FILE)
+
+
+@app.get("/t/{slug}/admin", include_in_schema=False)
+def serve_tenant_admin(slug: str):
+    return FileResponse(ADMIN_FILE)
 
 
 @app.get("/my-orders", include_in_schema=False)
@@ -217,7 +200,7 @@ async def create_order_by_slug(slug: str, order: OrderIn, tenant=Depends(_tenant
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     logger.info("[TENANT=%s] Order created id=%s", slug, oid)
     try:
-        await notify_admin(oid)
+        await notify_admin(oid, tenant.id)
     except Exception:
         logger.exception("notify_admin_failed tenant=%s order_id=%s", slug, oid)
     return OrderOut(order_id=oid)
@@ -260,38 +243,10 @@ async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate
 def order_history(slug: str, phone: str, limit: int = 20, tenant=Depends(_tenant_dep)):
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include order history")
-    orders = list_orders_by_phone(tenant, phone, limit=limit)
     try:
-        menu = get_menu_for_tenant(tenant)
+        items = order_history_for_phone(tenant, phone, limit=limit)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
-    item_map = _item_map(menu)
-    items = []
-    for order in orders:
-        order_items = []
-        for it in order.items or []:
-            item_id = str(it.get("item_id"))
-            qty = int(it.get("qty") or 0)
-            meta = item_map.get(item_id, {})
-            price = int(meta.get("price") or 0)
-            order_items.append(
-                {
-                    "item_id": item_id,
-                    "name": meta.get("name") or item_id,
-                    "qty": qty,
-                    "price": price,
-                    "line_total": price * qty,
-                }
-            )
-        items.append(
-            {
-                "id": order.id,
-                "status": order.status,
-                "total": float(order.total or 0),
-                "created_at": order.created_at.isoformat() if order.created_at else None,
-                "items": order_items,
-            }
-        )
     return {"items": items}
 
 
@@ -299,24 +254,12 @@ def order_history(slug: str, phone: str, limit: int = 20, tenant=Depends(_tenant
 def reorder_order(slug: str, oid: int, phone: str, tenant=Depends(_tenant_dep)):
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reorder")
-    order = get_order_for_tenant(tenant, oid)
-    if not order:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
-    if not order.customer_phone or order.customer_phone != phone:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Customer phone mismatch")
-    payload = {
-        "items": order.items or [],
-        "customer": {
-            "name": order.customer_name or "",
-            "phone": order.customer_phone or "",
-            "address": order.customer_address or "",
-            "comment": "Reorder",
-        },
-        "source": "reorder",
-        "customer_chat_id": order.customer_chat_id,
-    }
     try:
-        new_id = add_order(payload, tenant=tenant)
+        new_id = create_reorder_for_phone(tenant, oid, phone)
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     logger.info("[TENANT=%s] Order created id=%s", slug, new_id)
@@ -328,7 +271,7 @@ def list_active_promotions(slug: str, tenant=Depends(_tenant_dep)):
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
     promos = active_promotions_for_tenant(tenant)
-    return {"items": [_promo_to_dict(p) for p in promos]}
+    return {"items": [serialize_promotion(p) for p in promos]}
 
 
 @app.get("/t/{slug}/api/admin/promotions")
@@ -336,7 +279,7 @@ def admin_list_promotions(slug: str, tenant=Depends(_admin_tenant_dep)):
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include promotions")
     promos = list_promotions(tenant, include_inactive=True)
-    return {"items": [_promo_to_dict(p) for p in promos]}
+    return {"items": [serialize_promotion(p) for p in promos]}
 
 
 @app.post("/t/{slug}/api/admin/promotions")
@@ -347,7 +290,7 @@ def admin_create_promotion(slug: str, payload: PromotionIn, tenant=Depends(_admi
         promo = create_promotion(tenant, payload.model_dump())
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    return _promo_to_dict(promo)
+    return serialize_promotion(promo)
 
 
 @app.patch("/t/{slug}/api/admin/promotions/{pid}")
@@ -360,7 +303,7 @@ def admin_update_promotion(slug: str, pid: int, payload: PromotionUpdate, tenant
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except Exception:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Promotion not found")
-    return _promo_to_dict(promo)
+    return serialize_promotion(promo)
 
 
 @app.get("/t/{slug}/api/admin/analytics")
@@ -386,6 +329,6 @@ async def update_order_status_api(slug: str, oid: int, payload: OrderStatusUpdat
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     if not ok or not new:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid status transition or plan restriction")
-    await notify_order_status_changed(order.id, prev, new)
+    await notify_order_status_changed(order.id, tenant.id, prev, new)
     logger.info("[TENANT=%s] Order status updated id=%s %s->%s", slug, oid, prev, new)
     return {"ok": True, "status": new}
