@@ -1,11 +1,16 @@
 from pathlib import Path
 from datetime import datetime, time
 import logging
+import shutil
+import uuid
+from typing import Literal
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy import func, select
 
 from src.models import Menu, OrderIn, OrderOut
@@ -25,7 +30,10 @@ from src.store import (
     order_history_for_phone,
     list_reservations,
     list_promotions,
+    serialize_menu_item,
     serialize_promotion,
+    update_menu_item_for_tenant,
+    update_tenant_public_profile,
     update_order_status,
     update_promotion,
     tenant_plan,
@@ -42,9 +50,13 @@ INDEX_FILE = WEB_DIR / "index.html"
 MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 ADMIN_FILE = WEB_DIR / "admin.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+UPLOADS_DIR = Path("/data/uploads")
+
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/uploads", StaticFiles(directory="/data/uploads"), name="uploads")
 
 
 class ReservationIn(BaseModel):
@@ -93,6 +105,18 @@ class TenantPublic(BaseModel):
     bot_enabled: bool | None = None
 
 
+class TenantAdminUpdate(BaseModel):
+    description: str | None = None
+    hero_image: str | None = None
+
+
+class MenuItemAdminUpdate(BaseModel):
+    name: str | None = None
+    price: int | None = None
+    image_url: str | None = None
+    is_available: bool | None = None
+
+
 def _tenant_public(tenant):
     features = getattr(tenant, "features", {}) or {}
     description = features.get("description") if isinstance(features.get("description"), str) else None
@@ -129,6 +153,27 @@ def _admin_tenant_dep(
     if str(tenant.admin_chat_id) != str(x_admin_chat_id).strip():
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access denied")
     return tenant
+
+
+def _uploads_url_prefix(slug: str, kind: str | None = None) -> str:
+    encoded_slug = quote(slug, safe="")
+    if kind:
+        return f"/uploads/{encoded_slug}/{kind}/"
+    return f"/uploads/{encoded_slug}/"
+
+
+def _upload_dir(slug: str, kind: Literal["hero", "menu"]) -> Path:
+    root = UPLOADS_DIR.resolve()
+    target = (UPLOADS_DIR / slug / kind).resolve()
+    if target != root and root not in target.parents:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid upload path")
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _is_tenant_upload_url(value: str, slug: str, *, kind: str | None = None) -> bool:
+    prefix = _uploads_url_prefix(slug, kind)
+    return value.startswith(prefix)
 
 
 @app.on_event("startup")
@@ -190,6 +235,66 @@ def get_menu_by_slug(slug: str, tenant=Depends(_tenant_dep)):
 @app.get("/t/{slug}/tenant", response_model=TenantPublic)
 def get_tenant_by_slug_public(slug: str, tenant=Depends(_tenant_dep)):
     return _tenant_public(tenant)
+
+
+@app.post("/t/{slug}/api/admin/upload")
+async def admin_upload_file(
+    slug: str,
+    upload_type: Literal["hero", "menu"] = Form(..., alias="type"),
+    file: UploadFile = File(...),
+    tenant=Depends(_admin_tenant_dep),
+):
+    content_type = (file.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only image files are allowed")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if not suffix:
+        inferred = content_type.split("/", 1)[1].split("+", 1)[0].strip()
+        suffix = f".{inferred}" if inferred else ".img"
+    if suffix == ".jpe":
+        suffix = ".jpg"
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    folder = _upload_dir(tenant.slug, upload_type)
+    destination = folder / filename
+
+    with destination.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    await file.close()
+
+    url = f"{_uploads_url_prefix(tenant.slug, upload_type)}{filename}"
+    return {"url": url}
+
+
+@app.patch("/t/{slug}/api/admin/tenant", response_model=TenantPublic)
+def admin_update_tenant(slug: str, payload: TenantAdminUpdate, tenant=Depends(_admin_tenant_dep)):
+    update_data = payload.model_dump(exclude_unset=True)
+    hero_image = update_data.get("hero_image")
+    if hero_image and not _is_tenant_upload_url(hero_image, tenant.slug, kind="hero"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "hero_image must point to this tenant hero upload path")
+    try:
+        updated = update_tenant_public_profile(tenant, update_data)
+    except NoResultFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
+    return _tenant_public(updated)
+
+
+@app.patch("/t/{slug}/api/admin/menu-items/{item_id}")
+def admin_update_menu_item(slug: str, item_id: int, payload: MenuItemAdminUpdate, tenant=Depends(_admin_tenant_dep)):
+    update_data = payload.model_dump(exclude_unset=True)
+    image_url = update_data.get("image_url")
+    if image_url and not _is_tenant_upload_url(image_url, tenant.slug, kind="menu"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_url must point to this tenant menu upload path")
+    try:
+        item = update_menu_item_for_tenant(tenant, item_id, update_data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except NoResultFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    return serialize_menu_item(item)
 
 
 @app.post("/t/{slug}/orders", response_model=OrderOut)

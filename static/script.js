@@ -41,9 +41,12 @@
     return `/t/${encodeURIComponent(slug)}${path}`;
   }
 
-  function isAbsoluteHttpUrl(value) {
+  function isRenderableImageUrl(value) {
     if (!value || typeof value !== "string") {
       return false;
+    }
+    if (value.startsWith("/uploads/")) {
+      return true;
     }
     try {
       const parsed = new URL(value);
@@ -180,7 +183,7 @@
 
         const imageWrap = document.createElement("div");
         imageWrap.className = "menu-item-image";
-        if (isAbsoluteHttpUrl(item.image_url)) {
+        if (isRenderableImageUrl(item.image_url)) {
           const img = document.createElement("img");
           img.src = item.image_url;
           img.alt = item.name || "";
@@ -241,7 +244,7 @@
     if (data.description) {
       heroDesc.textContent = data.description;
     }
-    if (isAbsoluteHttpUrl(data.hero_image)) {
+    if (isRenderableImageUrl(data.hero_image)) {
       heroMedia.style.backgroundImage = `url("${data.hero_image}")`;
       heroMedia.classList.remove("hero-fallback");
     } else {

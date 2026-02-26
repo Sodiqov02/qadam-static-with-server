@@ -61,6 +61,7 @@ class MenuItem(Base):
     title = Column(String(255), nullable=False)
     price = Column(Integer, nullable=False, default=0)
     description = Column(Text, nullable=True)
+    image_url = Column(String(1024), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     sort = Column(Integer, nullable=False, default=0)
 

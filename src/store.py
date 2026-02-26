@@ -189,6 +189,7 @@ def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
                             "name": it.title,
                             "price": int(it.price or 0),
                             "description": it.description or "",
+                            "image_url": it.image_url or None,
                         }
                         for it in cat_items
                     ],
@@ -516,6 +517,89 @@ def tenant_public_features(tenant: Tenant) -> dict:
             public[key] = bool(value)
     public["plan"] = tenant_plan(tenant)
     return public
+
+
+def update_tenant_public_profile(tenant: Tenant, payload: Dict[str, Any]) -> Tenant:
+    with get_session() as session:
+        tenant_db = (
+            session.execute(
+                select(Tenant).where(Tenant.id == tenant.id, Tenant.slug == tenant.slug, Tenant.is_active.is_(True))
+            )
+            .scalars()
+            .first()
+        )
+        if not tenant_db:
+            raise NoResultFound()
+
+        features: Dict[str, Any] = {}
+        if isinstance(tenant_db.features, dict):
+            features.update(tenant_db.features)
+
+        if "description" in payload:
+            value = payload.get("description")
+            if value is None:
+                features.pop("description", None)
+            else:
+                features["description"] = str(value).strip()
+
+        if "hero_image" in payload:
+            value = payload.get("hero_image")
+            if value is None:
+                features.pop("hero_image", None)
+            else:
+                features["hero_image"] = str(value).strip()
+
+        tenant_db.features = features
+        session.flush()
+        session.refresh(tenant_db)
+        return tenant_db
+
+
+def update_menu_item_for_tenant(tenant: Tenant, item_id: int, payload: Dict[str, Any]) -> MenuItem:
+    with get_session() as session:
+        item = (
+            session.execute(
+                select(MenuItem).where(MenuItem.tenant_id == tenant.id, MenuItem.id == item_id)
+            )
+            .scalars()
+            .first()
+        )
+        if not item:
+            raise NoResultFound()
+
+        if "name" in payload:
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                raise ValueError("Menu item name is required")
+            item.title = name
+
+        if "price" in payload:
+            price = int(payload.get("price"))
+            if price < 0:
+                raise ValueError("Price must be non-negative")
+            item.price = price
+
+        if "image_url" in payload:
+            image_url = payload.get("image_url")
+            item.image_url = str(image_url).strip() if image_url else None
+
+        if "is_available" in payload:
+            item.is_active = bool(payload.get("is_available"))
+
+        session.flush()
+        session.refresh(item)
+        return item
+
+
+def serialize_menu_item(item: MenuItem) -> Dict[str, Any]:
+    return {
+        "id": item.id,
+        "name": item.title,
+        "price": int(item.price or 0),
+        "description": item.description or "",
+        "image_url": item.image_url,
+        "is_available": bool(item.is_active),
+    }
 
 
 def create_reservation(tenant: Tenant, payload: Dict[str, Any]) -> int:
