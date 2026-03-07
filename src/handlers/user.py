@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 from aiogram import Router, types
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -44,7 +45,7 @@ def create_user_router(tenant: Tenant) -> Router:
             return
         try:
             await message.delete()
-        except Exception:
+        except TelegramAPIError:
             return
 
     def _remember_bot_message(user_id: int, message_id: int, *, order_history: bool = False) -> None:
@@ -66,7 +67,7 @@ def create_user_router(tenant: Tenant) -> Router:
         for mid in items:
             try:
                 await bot.delete_message(chat_id=user_id, message_id=mid)
-            except Exception:
+            except TelegramAPIError:
                 continue
 
     async def _load_menu() -> dict:
@@ -160,7 +161,7 @@ def create_user_router(tenant: Tenant) -> Router:
             return
         try:
             menu = await _load_menu()
-        except Exception:
+        except (RuntimeError, httpx.HTTPError, ValueError):
             sent = await message.answer("Menyu vaqtincha mavjud emas. Keyinroq urinib ko'ring.")
             await _clear_bot_messages(message.bot, message.from_user.id)
             _remember_bot_message(message.from_user.id, sent.message_id)
@@ -183,7 +184,7 @@ def create_user_router(tenant: Tenant) -> Router:
             return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
         try:
             menu = await _load_menu()
-        except Exception:
+        except (RuntimeError, httpx.HTTPError, ValueError):
             await callback.answer("Menyu mavjud emas", show_alert=True)
             return
         text_lines = []
@@ -203,7 +204,7 @@ def create_user_router(tenant: Tenant) -> Router:
         cart = _cart_for(user_id)
         try:
             menu = await _load_menu()
-        except Exception:
+        except (RuntimeError, httpx.HTTPError, ValueError):
             return await callback.answer("Menyu mavjud emas", show_alert=True)
         items = _item_map(menu)
         if not cart:
@@ -220,7 +221,7 @@ def create_user_router(tenant: Tenant) -> Router:
         try:
             _, item_id, qty = message.text.split()
             qty = int(qty)
-        except Exception:
+        except (AttributeError, ValueError):
             sent = await message.answer("Format: /add item_id qty")
             await _clear_bot_messages(message.bot, message.from_user.id)
             _remember_bot_message(message.from_user.id, sent.message_id)
@@ -408,7 +409,7 @@ def create_user_router(tenant: Tenant) -> Router:
             bot = message.bot
             if bot and tenant.admin_chat_id:
                 await bot.send_message(chat_id=int(tenant.admin_chat_id), text=admin_text)
-        except Exception:
+        except TelegramAPIError:
             pass
 
         if user_id:

@@ -1,18 +1,22 @@
 from pathlib import Path
 from datetime import datetime, time
 import logging
+import os
 import shutil
 import uuid
 from typing import Literal
 from urllib.parse import quote
 
+from aiogram.exceptions import TelegramAPIError
+from aiogram.utils.token import TokenValidationError
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy.exc import NoResultFound
+from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy import func, select
 
+from src.config import ADMIN_SECRET
 from src.models import Menu, OrderIn, OrderOut
 from src.db import get_session
 from src.db_models import Tenant
@@ -50,13 +54,18 @@ INDEX_FILE = WEB_DIR / "index.html"
 MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 ADMIN_FILE = WEB_DIR / "admin.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
-UPLOADS_DIR = Path("/data/uploads")
-
-UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/data/uploads"))
+try:
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # stability fix: local/dev fallback when /data is unavailable.
+    UPLOADS_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    logger.warning("uploads_dir_fallback path=%s", UPLOADS_DIR)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-app.mount("/uploads", StaticFiles(directory="/data/uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 
 class ReservationIn(BaseModel):
@@ -141,17 +150,17 @@ def _tenant_dep(slug: str):
     return tenant
 
 
+def require_admin(x_admin_token: str | None = Header(default=None)):
+    # security fix
+    if x_admin_token != ADMIN_SECRET:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
 def _admin_tenant_dep(
     slug: str,
     tenant=Depends(_tenant_dep),
-    x_admin_chat_id: str | None = Header(default=None),
+    _=Depends(require_admin),
 ):
-    if not x_admin_chat_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
-    if not tenant.admin_chat_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access not configured")
-    if str(tenant.admin_chat_id) != str(x_admin_chat_id).strip():
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access denied")
     return tenant
 
 
@@ -182,7 +191,7 @@ def startup_checks():
         with get_session() as session:
             count = session.execute(select(func.count(Tenant.id))).scalar_one()
         logger.info("tenant_count=%s", count)
-    except Exception:
+    except SQLAlchemyError:
         logger.exception("tenant_count check failed during startup")
 
 
@@ -306,7 +315,7 @@ async def create_order_by_slug(slug: str, order: OrderIn, tenant=Depends(_tenant
     logger.info("[TENANT=%s] Order created id=%s", slug, oid)
     try:
         await notify_admin(oid, tenant.id)
-    except Exception:
+    except (TelegramAPIError, TokenValidationError, ValueError):
         logger.exception("notify_admin_failed tenant=%s order_id=%s", slug, oid)
     return OrderOut(order_id=oid)
 
@@ -406,7 +415,7 @@ def admin_update_promotion(slug: str, pid: int, payload: PromotionUpdate, tenant
         promo = update_promotion(tenant, pid, payload.model_dump(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    except Exception:
+    except NoResultFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Promotion not found")
     return serialize_promotion(promo)
 

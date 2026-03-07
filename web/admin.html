@@ -106,8 +106,9 @@
   <script>
     const tenantSlug = decodeURIComponent(window.location.pathname.split("/")[2] || "");
     const adminChatId = new URLSearchParams(window.location.search).get("admin_chat_id");
+    const adminToken = new URLSearchParams(window.location.search).get("admin_token");
     const tenantRequiredError = "Tenant slug required. Open page as /t/<slug>/admin";
-    const adminRequiredError = "admin_chat_id query param is required";
+    const adminRequiredError = "admin_token query param is required";
 
     const tenantPath = (path) => {
       if (!tenantSlug) throw new Error(tenantRequiredError);
@@ -115,8 +116,12 @@
     };
 
     const adminHeaders = (extra = {}) => {
-      if (!adminChatId) throw new Error(adminRequiredError);
-      return { ...extra, "x-admin-chat-id": String(adminChatId) };
+      if (!adminToken) throw new Error(adminRequiredError);
+      const headers = { ...extra, "x-admin-token": String(adminToken) };
+      if (adminChatId) {
+        headers["x-admin-chat-id"] = String(adminChatId);
+      }
+      return headers;
     };
 
     const backLink = document.getElementById("back-to-menu");
@@ -142,7 +147,7 @@
         analyticsStatus.textContent = tenantRequiredError;
         return;
       }
-      if (!adminChatId) {
+      if (!adminToken) {
         analyticsStatus.textContent = adminRequiredError;
         return;
       }
@@ -175,7 +180,7 @@
         promoStatus.textContent = tenantRequiredError;
         return;
       }
-      if (!adminChatId) {
+      if (!adminToken) {
         promoStatus.textContent = adminRequiredError;
         return;
       }
@@ -243,7 +248,7 @@
         promoStatus.textContent = tenantRequiredError;
         return;
       }
-      if (!adminChatId) {
+      if (!adminToken) {
         promoStatus.textContent = adminRequiredError;
         return;
       }

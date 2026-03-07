@@ -1,20 +1,24 @@
 import os
+from types import SimpleNamespace
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dotenv import load_dotenv
 
+# stability fix: .env is optional; environment variables still work without it.
+load_dotenv()
 
-class Settings(BaseSettings):
-    """Project-wide settings loaded from .env."""
+API_BASE_URL = os.getenv("API_BASE_URL", "")
+PORT = int(os.getenv("PORT", "8000"))
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable not set")
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
+# security fix: shared admin token for protected admin API routes.
+ADMIN_SECRET = os.getenv("ADMIN_SECRET", "change_me")
 
-    API_BASE_URL: str = Field(default_factory=lambda: os.getenv("API_BASE_URL", ""))
-    PORT: int = Field(default_factory=lambda: int(os.getenv("PORT", "8000")))
-    DATABASE_URL: str = Field(
-        ...,
-        description="Database URL (postgresql+psycopg://...)",
-    )
-
-
-settings = Settings()
+# Backward-compatible settings object used by existing imports.
+settings = SimpleNamespace(
+    API_BASE_URL=API_BASE_URL,
+    PORT=PORT,
+    DATABASE_URL=DATABASE_URL,
+    ADMIN_SECRET=ADMIN_SECRET,
+)

@@ -3,6 +3,8 @@ import logging
 
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramAPIError
+from aiogram.utils.token import TokenValidationError
 from src.db_models import Tenant
 from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_has_plan
 
@@ -18,7 +20,11 @@ def _get_bot_for_tenant(tenant: Tenant | None) -> Optional[Bot]:
         return None
     if token in _bot_cache:
         return _bot_cache[token]
-    bot = Bot(token=token, default=DefaultBotProperties(parse_mode=None))
+    try:
+        bot = Bot(token=token, default=DefaultBotProperties(parse_mode=None))
+    except TokenValidationError:
+        logger.exception("bot_token_invalid_for_notifications")
+        return None
     _bot_cache[token] = bot
     return bot
 
@@ -28,7 +34,7 @@ async def _safe_send(bot: Bot | None, chat_id: int, text: str) -> None:
         return
     try:
         await bot.send_message(chat_id=chat_id, text=text)
-    except Exception:
+    except TelegramAPIError:
         logger.exception("bot_notify_failed chat_id=%s", chat_id)
         return
 
@@ -75,8 +81,10 @@ async def notify_admin(order_id: int, tenant_id: int):
     for i in order["items"]:
         meta = price_map.get(str(i["item_id"]), {})
         name = meta.get("name") or i["item_id"]
-        price = meta.get("price", 0)
-        line_total = price * int(i.get("qty", 0) or 0)
+        price = i.get("price_at_order")
+        if price is None:
+            price = meta.get("price", 0)
+        line_total = int(float(price or 0)) * int(i.get("qty", 0) or 0)
         total += line_total
         item_lines.append(f"- {name} x{i['qty']} = {line_total} so'm")
 

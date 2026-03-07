@@ -79,6 +79,16 @@ def list_enabled_bot_tenants() -> List[Tenant]:
         )
 
 
+def disable_tenant_bot(tenant_id: int) -> None:
+    # stability fix
+    with get_session() as session:
+        session.execute(
+            update(Tenant)
+            .where(Tenant.id == tenant_id)
+            .values(bot_enabled=False)
+        )
+
+
 def bootstrap_tenant(
     *,
     slug: str,
@@ -371,7 +381,14 @@ def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
         price = Decimal(meta.get("price", 0))
         line_total = price * qty
         subtotal += line_total
-        items_payload.append({"item_id": item_id, "qty": qty})
+        items_payload.append(
+            {
+                "item_id": item_id,
+                "qty": qty,
+                # historical price snapshot
+                "price_at_order": float(price),
+            }
+        )
     if unknown_items:
         raise ValueError(f"Unknown item ids for tenant: {', '.join(unknown_items)}")
     if not items_payload:
@@ -719,7 +736,9 @@ def analytics_for_tenant(tenant: Tenant, range_key: str) -> dict:
                 continue
             meta = price_map.get(item_id, {})
             name = meta.get("name") or item_id
-            price = Decimal(meta.get("price") or 0)
+            snap_price = it.get("price_at_order")
+            price_value = snap_price if snap_price is not None else (meta.get("price") or 0)
+            price = Decimal(str(price_value or 0))
             stats = item_stats.setdefault(item_id, {"item_id": item_id, "name": name, "qty": 0, "revenue": 0})
             stats["qty"] += qty
             stats["revenue"] += int(price * qty)
@@ -767,7 +786,11 @@ def order_history_for_phone(tenant: Tenant, phone: str, limit: int = 20) -> List
             item_id = str(item.get("item_id"))
             qty = int(item.get("qty") or 0)
             meta = item_map.get(item_id, {})
-            price = int(meta.get("price") or 0)
+            snap_price = item.get("price_at_order")
+            if snap_price is None:
+                price = int(meta.get("price") or 0)
+            else:
+                price = int(Decimal(str(snap_price or 0)))
             order_items.append(
                 {
                     "item_id": item_id,
