@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Menu | Qadam</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page single">
+    <main class="content menu-admin-page">
+      <header class="content-head menu-admin-head">
+        <div>
+          <p class="eyebrow">Admin Menu</p>
+          <h2 id="page-title">Manage menu</h2>
+          <p class="muted" id="page-subtitle">Loading tenant...</p>
+        </div>
+        <div class="menu-admin-nav">
+          <a class="ghost-btn button-link" id="analytics-link" href="/">Analytics</a>
+          <a class="ghost-btn button-link" id="public-link" href="/">Public page</a>
+        </div>
+      </header>
+
+      <p class="muted status" id="global-status"></p>
+
+      <section class="menu-admin-shell">
+        <aside class="menu-admin-form-panel">
+          <div class="orders-panel">
+            <h3 id="form-heading">New item</h3>
+            <form id="menu-form" class="form">
+              <div class="field">
+                <label for="item-name">Name</label>
+                <input id="item-name" name="name" placeholder="Cheeseburger" required />
+              </div>
+              <div class="grid-two">
+                <div class="field">
+                  <label for="item-price">Price</label>
+                  <input id="item-price" name="price" type="number" min="0" step="1" required />
+                </div>
+                <div class="field">
+                  <label for="item-category">Category</label>
+                  <select id="item-category" name="category_id" required></select>
+                </div>
+              </div>
+              <div class="field">
+                <label for="item-description">Description</label>
+                <textarea id="item-description" name="description" placeholder="Optional"></textarea>
+              </div>
+              <div class="field">
+                <label>Image</label>
+                <div class="upload-row">
+                  <button type="button" class="secondary-btn" id="upload-trigger">Upload Image</button>
+                  <span class="muted" id="upload-label">No file selected</span>
+                </div>
+                <input id="image-upload" type="file" accept="image/*" hidden />
+                <input id="item-image-path" name="image_path" type="hidden" />
+              </div>
+              <div class="image-preview-card" id="image-preview-card">
+                <div class="img-placeholder" id="image-preview-placeholder">Image preview</div>
+                <img id="image-preview" alt="" hidden />
+              </div>
+              <div class="menu-form-actions">
+                <button type="submit" id="save-btn">Save item</button>
+                <button type="button" class="secondary-btn" id="reset-btn">Reset</button>
+              </div>
+              <p class="muted status" id="form-status"></p>
+            </form>
+          </div>
+        </aside>
+
+        <section class="orders-panel">
+          <div class="menu-table-toolbar">
+            <div>
+              <h3>Menu items</h3>
+              <p class="muted" id="table-meta">0 items</p>
+            </div>
+            <button type="button" class="secondary-btn" id="refresh-btn">Refresh</button>
+          </div>
+          <div class="menu-table-wrap">
+            <table class="analytics-table menu-admin-table">
+              <thead>
+                <tr>
+                  <th>Image</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="menu-items-body"></tbody>
+            </table>
+          </div>
+          <div class="empty-state" id="empty-state" hidden>No menu items yet.</div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const pathParts = window.location.pathname.split("/");
+    const tenantSlug = decodeURIComponent(pathParts[3] || "");
+    const adminToken = new URLSearchParams(window.location.search).get("admin_token");
+    const adminChatId = new URLSearchParams(window.location.search).get("admin_chat_id");
+
+    const globalStatus = document.getElementById("global-status");
+    const formStatus = document.getElementById("form-status");
+    const pageTitle = document.getElementById("page-title");
+    const pageSubtitle = document.getElementById("page-subtitle");
+    const tableMeta = document.getElementById("table-meta");
+    const menuItemsBody = document.getElementById("menu-items-body");
+    const emptyState = document.getElementById("empty-state");
+    const menuForm = document.getElementById("menu-form");
+    const itemName = document.getElementById("item-name");
+    const itemPrice = document.getElementById("item-price");
+    const itemCategory = document.getElementById("item-category");
+    const itemDescription = document.getElementById("item-description");
+    const itemImagePath = document.getElementById("item-image-path");
+    const uploadTrigger = document.getElementById("upload-trigger");
+    const uploadInput = document.getElementById("image-upload");
+    const uploadLabel = document.getElementById("upload-label");
+    const imagePreviewCard = document.getElementById("image-preview-card");
+    const imagePreview = document.getElementById("image-preview");
+    const imagePreviewPlaceholder = document.getElementById("image-preview-placeholder");
+    const refreshBtn = document.getElementById("refresh-btn");
+    const resetBtn = document.getElementById("reset-btn");
+    const saveBtn = document.getElementById("save-btn");
+    const formHeading = document.getElementById("form-heading");
+    const analyticsLink = document.getElementById("analytics-link");
+    const publicLink = document.getElementById("public-link");
+
+    let categories = [];
+    let items = [];
+    let editingId = null;
+
+    function adminHeaders(extra = {}) {
+      const headers = { ...extra };
+      if (!adminToken) {
+        throw new Error("admin_token query param is required");
+      }
+      headers["x-admin-token"] = String(adminToken);
+      if (adminChatId) {
+        headers["x-admin-chat-id"] = String(adminChatId);
+      }
+      return headers;
+    }
+
+    function setGlobalStatus(message) {
+      globalStatus.textContent = message || "";
+    }
+
+    function setFormStatus(message) {
+      formStatus.textContent = message || "";
+    }
+
+    function setPreview(url) {
+      if (url) {
+        imagePreview.src = url;
+        imagePreview.hidden = false;
+        imagePreviewPlaceholder.hidden = true;
+        imagePreviewCard.classList.add("has-image");
+      } else {
+        imagePreview.removeAttribute("src");
+        imagePreview.hidden = true;
+        imagePreviewPlaceholder.hidden = false;
+        imagePreviewCard.classList.remove("has-image");
+      }
+    }
+
+    function resetForm() {
+      editingId = null;
+      formHeading.textContent = "New item";
+      saveBtn.textContent = "Save item";
+      menuForm.reset();
+      itemImagePath.value = "";
+      uploadLabel.textContent = "No file selected";
+      setPreview("");
+      setFormStatus("");
+    }
+
+    function fillCategoryOptions() {
+      itemCategory.innerHTML = "";
+      categories.forEach((category) => {
+        const option = document.createElement("option");
+        option.value = category.id;
+        option.textContent = category.title;
+        itemCategory.appendChild(option);
+      });
+      itemCategory.disabled = !categories.length;
+      saveBtn.disabled = !categories.length;
+    }
+
+    function formatPrice(value) {
+      return `${Number(value || 0).toLocaleString("ru-RU")} so'm`;
+    }
+
+    function renderItems() {
+      menuItemsBody.innerHTML = "";
+      tableMeta.textContent = `${items.length} items`;
+      emptyState.hidden = items.length > 0;
+
+      items.forEach((item) => {
+        const row = document.createElement("tr");
+
+        const imageCell = document.createElement("td");
+        const thumb = document.createElement(item.image ? "img" : "div");
+        thumb.className = item.image ? "image-thumb" : "image-thumb image-thumb-fallback";
+        if (item.image) {
+          thumb.src = item.image;
+          thumb.alt = item.name || "";
+          thumb.loading = "lazy";
+        } else {
+          thumb.textContent = "No image";
+        }
+        imageCell.appendChild(thumb);
+
+        const nameCell = document.createElement("td");
+        const nameStrong = document.createElement("strong");
+        nameStrong.textContent = item.name || "";
+        const descriptionBlock = document.createElement("div");
+        descriptionBlock.className = "muted";
+        descriptionBlock.textContent = item.description || "";
+        nameCell.appendChild(nameStrong);
+        nameCell.appendChild(descriptionBlock);
+
+        const categoryCell = document.createElement("td");
+        categoryCell.textContent = item.category_title || `#${item.category_id}`;
+
+        const priceCell = document.createElement("td");
+        priceCell.textContent = formatPrice(item.price);
+
+        const actionsCell = document.createElement("td");
+        const actions = document.createElement("div");
+        actions.className = "inline-actions";
+
+        const editBtn = document.createElement("button");
+        editBtn.type = "button";
+        editBtn.className = "secondary-btn";
+        editBtn.textContent = "Edit";
+        editBtn.addEventListener("click", () => {
+          editingId = item.id;
+          formHeading.textContent = `Edit item #${item.id}`;
+          saveBtn.textContent = "Update item";
+          itemName.value = item.name || "";
+          itemPrice.value = item.price ?? "";
+          itemCategory.value = String(item.category_id || "");
+          itemDescription.value = item.description || "";
+          itemImagePath.value = item.image_path || "";
+          uploadLabel.textContent = item.image_path || "No file selected";
+          setPreview(item.image || item.image_url || "");
+          setFormStatus("");
+          window.scrollTo({ top: 0, behavior: "auto" });
+        });
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "danger-btn";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", async () => {
+          const confirmed = window.confirm(`Delete "${item.name}"?`);
+          if (!confirmed) return;
+          setGlobalStatus("");
+          const res = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
+            method: "DELETE",
+            headers: adminHeaders(),
+          });
+          if (!res.ok) {
+            setGlobalStatus("Delete failed.");
+            return;
+          }
+          if (editingId === item.id) {
+            resetForm();
+          }
+          await loadMenuAdmin();
+          setGlobalStatus("Item deleted.");
+        });
+
+        actions.appendChild(editBtn);
+        actions.appendChild(deleteBtn);
+        actionsCell.appendChild(actions);
+
+        row.appendChild(imageCell);
+        row.appendChild(nameCell);
+        row.appendChild(categoryCell);
+        row.appendChild(priceCell);
+        row.appendChild(actionsCell);
+        menuItemsBody.appendChild(row);
+      });
+    }
+
+    async function loadMenuAdmin() {
+      if (!tenantSlug) {
+        setGlobalStatus("Tenant slug missing in URL.");
+        return;
+      }
+      if (!adminToken) {
+        setGlobalStatus("admin_token query param is required.");
+        return;
+      }
+
+      const res = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
+        headers: adminHeaders(),
+      });
+      if (!res.ok) {
+        setGlobalStatus("Menu admin data could not be loaded.");
+        return;
+      }
+
+      const data = await res.json();
+      categories = data.categories || [];
+      items = data.items || [];
+      pageTitle.textContent = `${data.tenant?.name || tenantSlug} menu`;
+      pageSubtitle.textContent = `Tenant slug: ${data.tenant?.slug || tenantSlug}`;
+      fillCategoryOptions();
+      renderItems();
+      if (!categories.length) {
+        setGlobalStatus("No categories found for this tenant.");
+      } else {
+        setGlobalStatus("");
+      }
+    }
+
+    async function uploadImage(file) {
+      const formData = new FormData();
+      formData.append("file", file);
+      setFormStatus("Uploading image...");
+      uploadLabel.textContent = file.name;
+
+      const res = await fetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
+        method: "POST",
+        headers: adminHeaders(),
+        body: formData,
+      });
+      if (!res.ok) {
+        setFormStatus("Image upload failed.");
+        uploadLabel.textContent = "No file selected";
+        return;
+      }
+      const data = await res.json();
+      itemImagePath.value = data.image_path || "";
+      setPreview(data.image || "");
+      uploadLabel.textContent = data.image_path || file.name;
+      setFormStatus("Image uploaded.");
+    }
+
+    menuForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setFormStatus("");
+      if (!categories.length) {
+        setFormStatus("Create at least one category first.");
+        return;
+      }
+
+      const payload = {
+        name: itemName.value.trim(),
+        price: Number(itemPrice.value),
+        category_id: Number(itemCategory.value),
+        image_path: itemImagePath.value.trim() || null,
+        description: itemDescription.value.trim() || null,
+        is_available: true,
+      };
+
+      const isUpdate = editingId !== null;
+      const url = isUpdate
+        ? `/admin/api/menu/${encodeURIComponent(tenantSlug)}/${editingId}`
+        : `/admin/api/menu/${encodeURIComponent(tenantSlug)}`;
+      const method = isUpdate ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        setFormStatus(isUpdate ? "Update failed." : "Create failed.");
+        return;
+      }
+
+      await loadMenuAdmin();
+      resetForm();
+      setGlobalStatus(isUpdate ? "Item updated." : "Item created.");
+    });
+
+    uploadTrigger.addEventListener("click", () => uploadInput.click());
+    uploadInput.addEventListener("change", async () => {
+      const file = uploadInput.files && uploadInput.files[0];
+      if (!file) {
+        return;
+      }
+      await uploadImage(file);
+      uploadInput.value = "";
+    });
+    refreshBtn.addEventListener("click", loadMenuAdmin);
+    resetBtn.addEventListener("click", resetForm);
+
+    if (tenantSlug) {
+      const params = new URLSearchParams(window.location.search);
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      analyticsLink.href = `/t/${encodeURIComponent(tenantSlug)}/admin${suffix}`;
+      publicLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
+    }
+
+    resetForm();
+    loadMenuAdmin();
+  </script>
+</body>
+</html>

@@ -116,6 +116,7 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 .hero {
@@ -172,6 +173,11 @@ body {
 .eyebrow { margin: 0; color: var(--muted); font-size: 13px; }
 .content h2 { margin: 0; font-size: 24px; }
 .lang-switch { display: inline-flex; gap: 6px; }
+.menu-admin-nav {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .ghost-btn {
   background: transparent;
   color: var(--muted);
@@ -291,7 +297,7 @@ body {
 .cart-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .cart-item { display: flex; justify-content: space-between; padding: 8px 6px; background: #fff; border-radius: 10px; border: 1px solid #e5e7eb; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
-input, textarea {
+input, textarea, select {
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
@@ -314,6 +320,7 @@ textarea { resize: vertical; min-height: 70px; }
 }
 .orders-panel {
   margin-top: 12px;
+  min-width: 0;
 }
 .orders-search {
   display: flex;
@@ -351,6 +358,7 @@ textarea { resize: vertical; min-height: 70px; }
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .status-pill {
   padding: 4px 10px;
@@ -392,6 +400,122 @@ textarea { resize: vertical; min-height: 70px; }
   color: var(--muted);
   font-weight: 600;
 }
+.button-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.secondary-btn,
+.danger-btn {
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--stroke);
+  box-shadow: none;
+}
+.secondary-btn:hover,
+.danger-btn:hover {
+  box-shadow: none;
+}
+.danger-btn {
+  color: #991b1b;
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+.menu-admin-page {
+  overflow: hidden;
+}
+.menu-admin-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.menu-admin-form-panel {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+}
+.menu-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.menu-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--stroke);
+  border-radius: 16px;
+  background: #fff;
+  padding: 6px 12px 12px;
+}
+.menu-admin-table {
+  min-width: 760px;
+  margin-top: 0;
+}
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.image-preview-card {
+  width: 100%;
+  min-height: 180px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px dashed var(--stroke);
+  background: #f8fafc;
+  display: grid;
+  place-items: center;
+}
+.image-preview-card.has-image {
+  border-style: solid;
+}
+.image-preview-card img {
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+  display: block;
+}
+.menu-form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.image-thumb {
+  width: 68px;
+  height: 68px;
+  border-radius: 12px;
+  object-fit: cover;
+  display: block;
+  background: #f3f4f6;
+  border: 1px solid var(--stroke);
+}
+.image-thumb-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 6px;
+}
+.empty-state {
+  margin-top: 14px;
+  border: 1px dashed var(--stroke);
+  border-radius: 16px;
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+  background: #fafafa;
+}
 button {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #041b16;
@@ -420,4 +544,8 @@ button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow
   .hero { min-height: 170px; }
   .hero-content { padding: 14px 16px; }
   .hero-content h3 { font-size: 22px; }
+  .menu-admin-shell { grid-template-columns: 1fr; }
+  .menu-admin-form-panel { position: static; }
+  .menu-table-wrap { padding: 6px 8px 10px; }
+  .image-preview-card img { height: 180px; }
 }

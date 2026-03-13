@@ -57,7 +57,10 @@
             <p class="eyebrow">Promotions</p>
             <h2>Manage</h2>
           </div>
-          <a class="ghost-btn" id="back-to-menu" href="/">Back to menu</a>
+          <div class="menu-admin-nav">
+            <a class="ghost-btn button-link" id="menu-manager-link" href="/">Manage menu</a>
+            <a class="ghost-btn button-link" id="back-to-menu" href="/">Back to menu</a>
+          </div>
         </header>
 
         <form id="promo-form" class="form">
@@ -125,8 +128,14 @@
     };
 
     const backLink = document.getElementById("back-to-menu");
+    const menuManagerLink = document.getElementById("menu-manager-link");
     if (backLink && tenantSlug) {
       backLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
+    }
+    if (menuManagerLink && tenantSlug) {
+      const params = new URLSearchParams(window.location.search);
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      menuManagerLink.href = `/admin/menu/${encodeURIComponent(tenantSlug)}${suffix}`;
     }
 
     const ordersEl = document.getElementById("stat-orders");

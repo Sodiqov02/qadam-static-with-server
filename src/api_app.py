@@ -7,6 +7,8 @@ import uuid
 from typing import Literal
 from urllib.parse import quote
 
+from alembic import command
+from alembic.config import Config
 from aiogram.exceptions import TelegramAPIError
 from aiogram.utils.token import TokenValidationError
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
@@ -16,7 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy import func, select
 
-from src.config import ADMIN_SECRET
+from src.config import ADMIN_SECRET, settings
 from src.models import Menu, OrderIn, OrderOut
 from src.db import get_session
 from src.db_models import Tenant
@@ -26,9 +28,12 @@ from src.store import (
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
+    create_menu_item_for_tenant,
     create_reorder_for_phone,
     create_promotion,
     create_reservation,
+    delete_menu_item_for_tenant,
+    get_menu_admin_payload,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
     order_history_for_phone,
@@ -53,6 +58,7 @@ WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 INDEX_FILE = WEB_DIR / "index.html"
 MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 ADMIN_FILE = WEB_DIR / "admin.html"
+ADMIN_MENU_FILE = WEB_DIR / "admin_menu.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/data/uploads"))
 MENU_IMAGES_DIR = Path(os.getenv("MENU_IMAGES_DIR", "/data/menu_images"))
@@ -134,6 +140,15 @@ class MenuItemAdminUpdate(BaseModel):
     is_available: bool | None = None
 
 
+class MenuItemAdminPayload(BaseModel):
+    name: str
+    price: int
+    category_id: int
+    image_path: str | None = None
+    description: str | None = None
+    is_available: bool = True
+
+
 def _tenant_public(tenant):
     features = getattr(tenant, "features", {}) or {}
     description = features.get("description") if isinstance(features.get("description"), str) else None
@@ -150,6 +165,15 @@ def _tenant_public(tenant):
 
 
 def _tenant_dep(slug: str):
+    tenant = get_active_tenant_by_slug(slug)
+    if not tenant:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
+    if not tenant.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tenant inactive")
+    return tenant
+
+
+def _admin_tenant_lookup(slug: str) -> Tenant:
     tenant = get_active_tenant_by_slug(slug)
     if not tenant:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
@@ -213,8 +237,56 @@ def _is_tenant_menu_image_url(value: str, slug: str) -> bool:
     return value.startswith(prefix) or value.startswith(legacy_prefix)
 
 
+def _save_menu_image_file(slug: str, file: UploadFile) -> tuple[str, str]:
+    content_type = (file.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only image files are allowed")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if not suffix:
+        inferred = content_type.split("/", 1)[1].split("+", 1)[0].strip()
+        suffix = f".{inferred}" if inferred else ".img"
+    if suffix == ".jpe":
+        suffix = ".jpg"
+    if not suffix.startswith("."):
+        suffix = f".{suffix}"
+
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    folder = _menu_image_dir(slug)
+    destination = folder / filename
+    with destination.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    image_path = f"{slug}/{filename}"
+    image_url = f"{_menu_images_url_prefix(slug)}{filename}"
+    return image_path, image_url
+
+
+def _validate_menu_image_path(image_path: str | None, slug: str) -> str | None:
+    if not image_path:
+        return None
+    normalized = str(image_path).strip().strip("/")
+    if not normalized:
+        return None
+    if not normalized.startswith(f"{slug}/"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_path must point to this tenant menu image path")
+    if ".." in Path(normalized).parts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_path contains invalid path segments")
+    return normalized
+
+
+def run_migrations() -> None:
+    alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
+    alembic_dir = Path(__file__).resolve().parents[1] / "alembic"
+    config = Config(str(alembic_ini))
+    config.set_main_option("script_location", str(alembic_dir))
+    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+    logger.info("running_migrations target=head")
+    command.upgrade(config, "head")
+
+
 @app.on_event("startup")
-def startup_checks():
+async def startup_checks():
+    run_migrations()
     try:
         with get_session() as session:
             count = session.execute(select(func.count(Tenant.id))).scalar_one()
@@ -243,6 +315,13 @@ def serve_tenant_my_orders(slug: str):
 @app.get("/t/{slug}/admin", include_in_schema=False)
 def serve_tenant_admin(slug: str):
     return FileResponse(ADMIN_FILE)
+
+
+@app.get("/admin/menu/{tenant_slug}", include_in_schema=False)
+def serve_admin_menu(tenant_slug: str):
+    if not ADMIN_MENU_FILE.exists():
+        raise HTTPException(404, "Admin menu page not found")
+    return FileResponse(ADMIN_MENU_FILE)
 
 
 @app.get("/my-orders", include_in_schema=False)
@@ -281,33 +360,45 @@ async def admin_upload_file(
     file: UploadFile = File(...),
     tenant=Depends(_admin_tenant_dep),
 ):
-    content_type = (file.content_type or "").lower()
-    if not content_type.startswith("image/"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only image files are allowed")
-
-    suffix = Path(file.filename or "").suffix.lower()
-    if not suffix:
-        inferred = content_type.split("/", 1)[1].split("+", 1)[0].strip()
-        suffix = f".{inferred}" if inferred else ".img"
-    if suffix == ".jpe":
-        suffix = ".jpg"
-    if not suffix.startswith("."):
-        suffix = f".{suffix}"
-
-    filename = f"{uuid.uuid4().hex}{suffix}"
     if upload_type == "menu":
-        folder = _menu_image_dir(tenant.slug)
-        public_url = f"{_menu_images_url_prefix(tenant.slug)}{filename}"
+        _, public_url = _save_menu_image_file(tenant.slug, file)
     else:
+        content_type = (file.content_type or "").lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only image files are allowed")
+        suffix = Path(file.filename or "").suffix.lower()
+        if not suffix:
+            inferred = content_type.split("/", 1)[1].split("+", 1)[0].strip()
+            suffix = f".{inferred}" if inferred else ".img"
+        if suffix == ".jpe":
+            suffix = ".jpg"
+        if not suffix.startswith("."):
+            suffix = f".{suffix}"
+        filename = f"{uuid.uuid4().hex}{suffix}"
         folder = _upload_dir(tenant.slug, "hero")
         public_url = f"{_uploads_url_prefix(tenant.slug, 'hero')}{filename}"
-    destination = folder / filename
+        destination = folder / filename
 
-    with destination.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
+        with destination.open("wb") as out:
+            shutil.copyfileobj(file.file, out)
     await file.close()
 
     return {"url": public_url}
+
+
+@app.post("/admin/upload-image/{tenant}")
+async def upload_menu_image_admin(
+    tenant: str,
+    file: UploadFile = File(...),
+    _=Depends(require_admin),
+):
+    tenant_obj = _admin_tenant_lookup(tenant)
+    image_path, image_url = _save_menu_image_file(tenant_obj.slug, file)
+    await file.close()
+    return {
+        "image_path": image_path,
+        "image": image_url,
+    }
 
 
 @app.patch("/t/{slug}/api/admin/tenant", response_model=TenantPublic)
@@ -336,6 +427,64 @@ def admin_update_menu_item(slug: str, item_id: int, payload: MenuItemAdminUpdate
     except NoResultFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
     return serialize_menu_item(item)
+
+
+@app.get("/admin/api/menu/{tenant}")
+def admin_menu_get(
+    tenant: str,
+    include_inactive: bool = False,
+    _=Depends(require_admin),
+):
+    tenant_obj = _admin_tenant_lookup(tenant)
+    return get_menu_admin_payload(tenant_obj, include_inactive=include_inactive)
+
+
+@app.post("/admin/api/menu/{tenant}")
+def admin_menu_create(
+    tenant: str,
+    payload: MenuItemAdminPayload,
+    _=Depends(require_admin),
+):
+    tenant_obj = _admin_tenant_lookup(tenant)
+    data = payload.model_dump()
+    data["image_path"] = _validate_menu_image_path(data.get("image_path"), tenant_obj.slug)
+    try:
+        item = create_menu_item_for_tenant(tenant_obj, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return serialize_menu_item(item)
+
+
+@app.put("/admin/api/menu/{tenant}/{item_id}")
+def admin_menu_update(
+    tenant: str,
+    item_id: int,
+    payload: MenuItemAdminPayload,
+    _=Depends(require_admin),
+):
+    tenant_obj = _admin_tenant_lookup(tenant)
+    data = payload.model_dump()
+    data["image_path"] = _validate_menu_image_path(data.get("image_path"), tenant_obj.slug)
+    try:
+        item = update_menu_item_for_tenant(tenant_obj, item_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except NoResultFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    return serialize_menu_item(item)
+
+
+@app.delete("/admin/api/menu/{tenant}/{item_id}")
+def admin_menu_delete(
+    tenant: str,
+    item_id: int,
+    _=Depends(require_admin),
+):
+    tenant_obj = _admin_tenant_lookup(tenant)
+    ok = delete_menu_item_for_tenant(tenant_obj, item_id)
+    if not ok:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    return {"ok": True}
 
 
 @app.post("/t/{slug}/orders", response_model=OrderOut)

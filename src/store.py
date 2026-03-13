@@ -254,6 +254,98 @@ def get_menu_for_tenant(tenant: Tenant) -> dict:
     return {"categories": menu_from_db}
 
 
+def _menu_category_for_tenant(session, tenant_id: int, category_id: int) -> MenuCategory:
+    category = (
+        session.execute(
+            select(MenuCategory).where(
+                MenuCategory.tenant_id == tenant_id,
+                MenuCategory.id == category_id,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not category:
+        raise ValueError("Category not found for tenant")
+    return category
+
+
+def _serialize_menu_category(category: MenuCategory) -> Dict[str, Any]:
+    return {
+        "id": category.id,
+        "title": category.title,
+        "sort": int(category.sort or 0),
+    }
+
+
+def _serialize_admin_menu_item(item: MenuItem, category: MenuCategory | None = None) -> Dict[str, Any]:
+    image_url = _menu_image_url_from_path(item.image_path) or item.image_url
+    return {
+        "id": item.id,
+        "name": item.title,
+        "price": int(item.price or 0),
+        "description": item.description or "",
+        "image": image_url,
+        "image_url": image_url,
+        "image_path": item.image_path,
+        "is_available": bool(item.is_active),
+        "category_id": item.category_id,
+        "category_title": category.title if category else None,
+        "sort": int(item.sort or 0),
+    }
+
+
+def list_menu_categories_for_tenant(tenant: Tenant) -> List[Dict[str, Any]]:
+    with get_session() as session:
+        categories = (
+            session.execute(
+                select(MenuCategory)
+                .where(MenuCategory.tenant_id == tenant.id)
+                .order_by(MenuCategory.sort, MenuCategory.id)
+            )
+            .scalars()
+            .all()
+        )
+    return [_serialize_menu_category(category) for category in categories]
+
+
+def list_menu_items_for_tenant_admin(tenant: Tenant, *, include_inactive: bool = False) -> List[Dict[str, Any]]:
+    with get_session() as session:
+        categories = (
+            session.execute(
+                select(MenuCategory)
+                .where(MenuCategory.tenant_id == tenant.id)
+                .order_by(MenuCategory.sort, MenuCategory.id)
+            )
+            .scalars()
+            .all()
+        )
+        category_map = {category.id: category for category in categories}
+        query = select(MenuItem).where(MenuItem.tenant_id == tenant.id)
+        if not include_inactive:
+            query = query.where(MenuItem.is_active.is_(True))
+        items = session.execute(
+            query.order_by(MenuItem.category_id, MenuItem.sort, MenuItem.id)
+        ).scalars().all()
+
+    return [
+        _serialize_admin_menu_item(item, category_map.get(item.category_id))
+        for item in items
+    ]
+
+
+def get_menu_admin_payload(tenant: Tenant, *, include_inactive: bool = False) -> Dict[str, Any]:
+    return {
+        "tenant": {
+            "id": tenant.id,
+            "slug": tenant.slug,
+            "name": tenant.name,
+        },
+        "categories": list_menu_categories_for_tenant(tenant),
+        "items": list_menu_items_for_tenant_admin(tenant, include_inactive=include_inactive),
+    }
+
+
 def _price_lookup(tenant: Tenant) -> Dict[str, Dict[str, Any]]:
     menu = get_menu_for_tenant(tenant)
     mapping: Dict[str, Dict[str, Any]] = {}
@@ -300,6 +392,51 @@ def get_menu_item_map_for_tenant(tenant: Tenant, item_ids: Iterable[str | int]) 
         }
         for item in items
     }
+
+
+def create_menu_item_for_tenant(tenant: Tenant, payload: Dict[str, Any]) -> MenuItem:
+    with get_session() as session:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("Menu item name is required")
+
+        try:
+            price = int(payload.get("price"))
+        except (TypeError, ValueError):
+            raise ValueError("Price must be an integer")
+        if price < 0:
+            raise ValueError("Price must be non-negative")
+
+        try:
+            category_id = int(payload.get("category_id"))
+        except (TypeError, ValueError):
+            raise ValueError("category_id is required")
+
+        _menu_category_for_tenant(session, tenant.id, category_id)
+
+        max_sort = session.execute(
+            select(MenuItem.sort)
+            .where(MenuItem.tenant_id == tenant.id, MenuItem.category_id == category_id)
+            .order_by(MenuItem.sort.desc(), MenuItem.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        image_path = payload.get("image_path")
+        normalized_image_path = str(image_path).strip().strip("/") if image_path else None
+        item = MenuItem(
+            tenant_id=tenant.id,
+            category_id=category_id,
+            title=name,
+            price=price,
+            description=str(payload.get("description") or "").strip() or None,
+            image_path=normalized_image_path,
+            image_url=_menu_image_url_from_path(normalized_image_path),
+            is_active=bool(payload.get("is_available", True)),
+            sort=int(max_sort or -1) + 1,
+        )
+        session.add(item)
+        session.flush()
+        session.refresh(item)
+        return item
 
 
 def _time_in_window(now_time, start_time, end_time) -> bool:
@@ -674,12 +811,25 @@ def update_menu_item_for_tenant(tenant: Tenant, item_id: int, payload: Dict[str,
         if "image_path" in payload:
             image_path = payload.get("image_path")
             item.image_path = str(image_path).strip().strip("/") if image_path else None
+            item.image_url = _menu_image_url_from_path(item.image_path)
 
         if "image_url" in payload:
             image_url = payload.get("image_url")
             normalized_url = str(image_url).strip() if image_url else None
             item.image_url = normalized_url
             item.image_path = _menu_image_path_from_url(normalized_url, tenant.slug)
+
+        if "category_id" in payload:
+            try:
+                category_id = int(payload.get("category_id"))
+            except (TypeError, ValueError):
+                raise ValueError("category_id must be an integer")
+            _menu_category_for_tenant(session, tenant.id, category_id)
+            item.category_id = category_id
+
+        if "description" in payload:
+            description = str(payload.get("description") or "").strip()
+            item.description = description or None
 
         if "is_available" in payload:
             item.is_active = bool(payload.get("is_available"))
@@ -689,18 +839,24 @@ def update_menu_item_for_tenant(tenant: Tenant, item_id: int, payload: Dict[str,
         return item
 
 
+def delete_menu_item_for_tenant(tenant: Tenant, item_id: int) -> bool:
+    with get_session() as session:
+        item = (
+            session.execute(
+                select(MenuItem).where(MenuItem.tenant_id == tenant.id, MenuItem.id == item_id)
+            )
+            .scalars()
+            .first()
+        )
+        if not item:
+            return False
+        item.is_active = False
+        session.flush()
+        return True
+
+
 def serialize_menu_item(item: MenuItem) -> Dict[str, Any]:
-    image_url = _menu_image_url_from_path(item.image_path) or item.image_url
-    return {
-        "id": item.id,
-        "name": item.title,
-        "price": int(item.price or 0),
-        "description": item.description or "",
-        "image": image_url,
-        "image_url": image_url,
-        "image_path": item.image_path,
-        "is_available": bool(item.is_active),
-    }
+    return _serialize_admin_menu_item(item)
 
 
 def create_reservation(tenant: Tenant, payload: Dict[str, Any]) -> int:
