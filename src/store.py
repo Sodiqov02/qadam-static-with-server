@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import logging
+from urllib.parse import quote, unquote
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import NoResultFound
@@ -43,6 +44,43 @@ STATUS_TRANSITIONS = {
     "CANCELED": set(),
 }
 logger = logging.getLogger(__name__)
+
+
+def _menu_image_url_from_path(image_path: str | None) -> str | None:
+    if not image_path:
+        return None
+    normalized = str(image_path).strip().strip("/")
+    if not normalized:
+        return None
+    parts = [quote(part, safe="") for part in normalized.split("/") if part]
+    if not parts:
+        return None
+    return f"/menu-images/{'/'.join(parts)}"
+
+
+def _menu_image_path_from_url(value: str | None, slug: str) -> str | None:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    prefix = f"/menu-images/{slug}/"
+    if raw.startswith(prefix):
+        filename = raw[len(prefix):].strip("/")
+        return f"{slug}/{unquote(filename)}" if filename else None
+
+    legacy_prefix = f"/uploads/{slug}/menu/"
+    if raw.startswith(legacy_prefix):
+        filename = raw[len(legacy_prefix):].strip("/")
+        return f"{slug}/{unquote(filename)}" if filename else None
+
+    normalized = raw.strip("/")
+    expected_prefix = f"{slug}/"
+    if normalized.startswith(expected_prefix):
+        return unquote(normalized)
+
+    return None
 
 
 def get_tenant_by_slug(slug: str) -> Optional[Tenant]:
@@ -199,7 +237,8 @@ def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
                             "name": it.title,
                             "price": int(it.price or 0),
                             "description": it.description or "",
-                            "image_url": it.image_url or None,
+                            "image": _menu_image_url_from_path(it.image_path) or it.image_url or None,
+                            "image_url": _menu_image_url_from_path(it.image_path) or it.image_url or None,
                         }
                         for it in cat_items
                     ],
@@ -225,6 +264,42 @@ def _price_lookup(tenant: Tenant) -> Dict[str, Dict[str, Any]]:
                 "price": int(it.get("price") or 0),
             }
     return mapping
+
+
+def get_menu_item_map_for_tenant(tenant: Tenant, item_ids: Iterable[str | int]) -> Dict[str, Dict[str, Any]]:
+    normalized_ids: List[int] = []
+    for item_id in item_ids:
+        try:
+            normalized_ids.append(int(str(item_id)))
+        except (TypeError, ValueError):
+            continue
+
+    if not normalized_ids:
+        return {}
+
+    with get_session() as session:
+        items = (
+            session.execute(
+                select(MenuItem).where(
+                    MenuItem.tenant_id == tenant.id,
+                    MenuItem.id.in_(normalized_ids),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    return {
+        str(item.id): {
+            "id": str(item.id),
+            "name": item.title,
+            "price": int(item.price or 0),
+            "description": item.description or "",
+            "image": _menu_image_url_from_path(item.image_path) or item.image_url or None,
+            "image_url": _menu_image_url_from_path(item.image_path) or item.image_url or None,
+        }
+        for item in items
+    }
 
 
 def _time_in_window(now_time, start_time, end_time) -> bool:
@@ -596,9 +671,15 @@ def update_menu_item_for_tenant(tenant: Tenant, item_id: int, payload: Dict[str,
                 raise ValueError("Price must be non-negative")
             item.price = price
 
+        if "image_path" in payload:
+            image_path = payload.get("image_path")
+            item.image_path = str(image_path).strip().strip("/") if image_path else None
+
         if "image_url" in payload:
             image_url = payload.get("image_url")
-            item.image_url = str(image_url).strip() if image_url else None
+            normalized_url = str(image_url).strip() if image_url else None
+            item.image_url = normalized_url
+            item.image_path = _menu_image_path_from_url(normalized_url, tenant.slug)
 
         if "is_available" in payload:
             item.is_active = bool(payload.get("is_available"))
@@ -609,12 +690,15 @@ def update_menu_item_for_tenant(tenant: Tenant, item_id: int, payload: Dict[str,
 
 
 def serialize_menu_item(item: MenuItem) -> Dict[str, Any]:
+    image_url = _menu_image_url_from_path(item.image_path) or item.image_url
     return {
         "id": item.id,
         "name": item.title,
         "price": int(item.price or 0),
         "description": item.description or "",
-        "image_url": item.image_url,
+        "image": image_url,
+        "image_url": image_url,
+        "image_path": item.image_path,
         "is_available": bool(item.is_active),
     }
 

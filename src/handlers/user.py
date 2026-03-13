@@ -15,6 +15,7 @@ from aiogram.types import (
 
 from src.config import settings
 from src.db_models import Tenant
+from src.store import get_menu_item_map_for_tenant
 
 
 def create_user_router(tenant: Tenant) -> Router:
@@ -106,13 +107,19 @@ def create_user_router(tenant: Tenant) -> Router:
         )
         return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    def _cart_keyboard(cart: dict[str, int]) -> InlineKeyboardMarkup:
+    def _cart_items(cart: dict[str, int]) -> dict[str, dict]:
+        return get_menu_item_map_for_tenant(tenant, cart.keys())
+
+    def _cart_keyboard(cart: dict[str, int], items: dict[str, dict]) -> InlineKeyboardMarkup:
         buttons = []
         for item_id, qty in cart.items():
+            item = items.get(item_id)
+            if not item:
+                continue
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        text=f"- {item_id} x{qty}",
+                        text=f"X {item.get('name', item_id)}",
                         callback_data=f"remove:{item_id}",
                     )
                 ]
@@ -132,7 +139,9 @@ def create_user_router(tenant: Tenant) -> Router:
         lines = ["Savatingiz:", ""]
         total = 0
         for item_id, qty in cart.items():
-            meta = items.get(item_id, {})
+            meta = items.get(item_id)
+            if not meta:
+                continue
             name = meta.get("name", item_id)
             price = int(meta.get("price") or 0)
             line_total = price * qty if price else qty
@@ -202,16 +211,12 @@ def create_user_router(tenant: Tenant) -> Router:
             return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
         user_id = callback.from_user.id
         cart = _cart_for(user_id)
-        try:
-            menu = await _load_menu()
-        except (RuntimeError, httpx.HTTPError, ValueError):
-            return await callback.answer("Menyu mavjud emas", show_alert=True)
-        items = _item_map(menu)
+        items = _cart_items(cart)
         if not cart:
             await callback.answer("Savat bo'sh", show_alert=True)
             return await callback.message.edit_text("Savat bo'sh. Menyu tugmasini bosing.")
         await state.update_data(cart=cart)
-        await callback.message.edit_text(_cart_text(cart, items), reply_markup=_cart_keyboard(cart))
+        await callback.message.edit_text(_cart_text(cart, items), reply_markup=_cart_keyboard(cart, items))
         await callback.answer()
 
     @router.message(Command("add"))
@@ -229,8 +234,10 @@ def create_user_router(tenant: Tenant) -> Router:
             return
         cart = _cart_for(message.from_user.id)
         cart[item_id] = cart.get(item_id, 0) + qty
+        items = _cart_items(cart)
+        item_name = items.get(item_id, {}).get("name", item_id)
         await _clear_bot_messages(message.bot, message.from_user.id)
-        sent = await message.answer(f"Qo'shildi: {item_id} x{qty}\n/cart - savatni ko'rish", reply_markup=_main_kb())
+        sent = await message.answer(f"Qo'shildi: {item_name} x{qty}\n/cart - savatni ko'rish", reply_markup=_main_kb())
         _remember_bot_message(message.from_user.id, sent.message_id)
         await _safe_delete_message(message)
 
@@ -267,8 +274,7 @@ def create_user_router(tenant: Tenant) -> Router:
             return await message.answer("Foydalanuvchini aniqlab bo'lmadi.")
         user_id = message.from_user.id
         cart = _cart_for(user_id)
-        menu = await _load_menu()
-        items = _item_map(menu)
+        items = _cart_items(cart)
         if not cart:
             await _clear_bot_messages(message.bot, message.from_user.id)
             sent = await message.answer("Savat bo'sh. Menyu tugmasini bosing.", reply_markup=_main_kb())
@@ -280,7 +286,7 @@ def create_user_router(tenant: Tenant) -> Router:
         await _clear_bot_messages(message.bot, message.from_user.id)
         sent = await message.answer(
             _cart_text(cart, items),
-            reply_markup=_cart_keyboard(cart),
+            reply_markup=_cart_keyboard(cart, items),
         )
         await state.set_state(Checkout.name)
         _remember_bot_message(message.from_user.id, sent.message_id)
@@ -295,10 +301,9 @@ def create_user_router(tenant: Tenant) -> Router:
         item_id = callback.data.split(":", 1)[1]
         cart = _cart_for(callback.from_user.id)
         cart.pop(item_id, None)
-        menu = await _load_menu()
-        items = _item_map(menu)
+        items = _cart_items(cart)
         text = _cart_text(cart, items)
-        await callback.message.edit_text(text, reply_markup=_cart_keyboard(cart))
+        await callback.message.edit_text(text, reply_markup=_cart_keyboard(cart, items))
         await callback.answer("O'chirildi")
 
     @router.callback_query(lambda c: c.data == "checkout")
@@ -307,15 +312,14 @@ def create_user_router(tenant: Tenant) -> Router:
             return await callback.answer("Foydalanuvchi aniqlanmadi", show_alert=True)
         user_id = callback.from_user.id
         cart = _cart_for(user_id)
-        menu = await _load_menu()
-        items = _item_map(menu)
+        items = _cart_items(cart)
         if not cart:
             await callback.answer("Savat bo'sh", show_alert=True)
             return await callback.message.edit_text("Savat bo'sh. Menyu tugmasini bosing.")
 
         await state.update_data(cart=cart)
         await state.set_state(Checkout.name)
-        await callback.message.edit_text(_cart_text(cart, items), reply_markup=_cart_keyboard(cart))
+        await callback.message.edit_text(_cart_text(cart, items), reply_markup=_cart_keyboard(cart, items))
         bot = callback.message.bot
         if bot:
             await bot.send_message(user_id, "Ismingizni yozing:", reply_markup=_main_kb())
@@ -361,8 +365,7 @@ def create_user_router(tenant: Tenant) -> Router:
             await _safe_delete_message(message)
             return
 
-        menu = await _load_menu()
-        items = _item_map(menu)
+        items = _cart_items(cart)
         comment = "-" if not message.text or message.text.strip() == "-" else message.text.strip()
 
         payload = {

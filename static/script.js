@@ -48,6 +48,9 @@
     if (value.startsWith("/uploads/")) {
       return true;
     }
+    if (value.startsWith("/menu-images/")) {
+      return true;
+    }
     try {
       const parsed = new URL(value);
       return parsed.protocol === "http:" || parsed.protocol === "https:";
@@ -183,9 +186,10 @@
 
         const imageWrap = document.createElement("div");
         imageWrap.className = "menu-item-image";
-        if (isRenderableImageUrl(item.image_url)) {
+        const imageUrl = item.image || item.image_url;
+        if (isRenderableImageUrl(imageUrl)) {
           const img = document.createElement("img");
-          img.src = item.image_url;
+          img.src = imageUrl;
           img.alt = item.name || "";
           img.loading = "lazy";
           imageWrap.appendChild(img);

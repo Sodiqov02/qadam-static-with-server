@@ -55,6 +55,7 @@ MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 ADMIN_FILE = WEB_DIR / "admin.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/data/uploads"))
+MENU_IMAGES_DIR = Path(os.getenv("MENU_IMAGES_DIR", "/data/menu_images"))
 try:
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 except OSError:
@@ -62,10 +63,17 @@ except OSError:
     UPLOADS_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     logger.warning("uploads_dir_fallback path=%s", UPLOADS_DIR)
+try:
+    MENU_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+except OSError:
+    MENU_IMAGES_DIR = Path(__file__).resolve().parents[1] / "data" / "menu_images"
+    MENU_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    logger.warning("menu_images_dir_fallback path=%s", MENU_IMAGES_DIR)
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+app.mount("/menu-images", StaticFiles(directory=str(MENU_IMAGES_DIR)), name="menu-images")
 
 
 class ReservationIn(BaseModel):
@@ -171,7 +179,12 @@ def _uploads_url_prefix(slug: str, kind: str | None = None) -> str:
     return f"/uploads/{encoded_slug}/"
 
 
-def _upload_dir(slug: str, kind: Literal["hero", "menu"]) -> Path:
+def _menu_images_url_prefix(slug: str) -> str:
+    encoded_slug = quote(slug, safe="")
+    return f"/menu-images/{encoded_slug}/"
+
+
+def _upload_dir(slug: str, kind: Literal["hero"]) -> Path:
     root = UPLOADS_DIR.resolve()
     target = (UPLOADS_DIR / slug / kind).resolve()
     if target != root and root not in target.parents:
@@ -180,9 +193,24 @@ def _upload_dir(slug: str, kind: Literal["hero", "menu"]) -> Path:
     return target
 
 
+def _menu_image_dir(slug: str) -> Path:
+    root = MENU_IMAGES_DIR.resolve()
+    target = (MENU_IMAGES_DIR / slug).resolve()
+    if target != root and root not in target.parents:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid menu image path")
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 def _is_tenant_upload_url(value: str, slug: str, *, kind: str | None = None) -> bool:
     prefix = _uploads_url_prefix(slug, kind)
     return value.startswith(prefix)
+
+
+def _is_tenant_menu_image_url(value: str, slug: str) -> bool:
+    prefix = _menu_images_url_prefix(slug)
+    legacy_prefix = _uploads_url_prefix(slug, "menu")
+    return value.startswith(prefix) or value.startswith(legacy_prefix)
 
 
 @app.on_event("startup")
@@ -267,15 +295,19 @@ async def admin_upload_file(
         suffix = f".{suffix}"
 
     filename = f"{uuid.uuid4().hex}{suffix}"
-    folder = _upload_dir(tenant.slug, upload_type)
+    if upload_type == "menu":
+        folder = _menu_image_dir(tenant.slug)
+        public_url = f"{_menu_images_url_prefix(tenant.slug)}{filename}"
+    else:
+        folder = _upload_dir(tenant.slug, "hero")
+        public_url = f"{_uploads_url_prefix(tenant.slug, 'hero')}{filename}"
     destination = folder / filename
 
     with destination.open("wb") as out:
         shutil.copyfileobj(file.file, out)
     await file.close()
 
-    url = f"{_uploads_url_prefix(tenant.slug, upload_type)}{filename}"
-    return {"url": url}
+    return {"url": public_url}
 
 
 @app.patch("/t/{slug}/api/admin/tenant", response_model=TenantPublic)
@@ -295,8 +327,8 @@ def admin_update_tenant(slug: str, payload: TenantAdminUpdate, tenant=Depends(_a
 def admin_update_menu_item(slug: str, item_id: int, payload: MenuItemAdminUpdate, tenant=Depends(_admin_tenant_dep)):
     update_data = payload.model_dump(exclude_unset=True)
     image_url = update_data.get("image_url")
-    if image_url and not _is_tenant_upload_url(image_url, tenant.slug, kind="menu"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_url must point to this tenant menu upload path")
+    if image_url and not _is_tenant_menu_image_url(image_url, tenant.slug):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_url must point to this tenant menu image path")
     try:
         item = update_menu_item_for_tenant(tenant, item_id, update_data)
     except ValueError as exc:
