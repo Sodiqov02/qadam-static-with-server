@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import logging
+import secrets
 from urllib.parse import quote, unquote
 
 from sqlalchemy import func, select, update
@@ -9,6 +10,8 @@ from sqlalchemy.exc import NoResultFound
 
 from src.db import get_session
 from src.db_models import (
+    AdminLoginToken,
+    AdminSession,
     BotUser,
     MenuCategory,
     MenuItem,
@@ -44,6 +47,8 @@ STATUS_TRANSITIONS = {
     "CANCELED": set(),
 }
 logger = logging.getLogger(__name__)
+ADMIN_LOGIN_TOKEN_TTL_MINUTES = 10
+ADMIN_SESSION_TTL_DAYS = 7
 
 
 def _category_sort_value(category: MenuCategory) -> int:
@@ -111,6 +116,90 @@ def get_tenant_by_bot_token(token: str) -> Optional[Tenant]:
             session.execute(select(Tenant).where(Tenant.bot_token == token, Tenant.bot_enabled.is_(True)))
             .scalar_one_or_none()
         )
+
+
+def create_admin_login_token_for_tenant(tenant: Tenant, ttl_minutes: int = ADMIN_LOGIN_TOKEN_TTL_MINUTES) -> AdminLoginToken:
+    token = secrets.token_urlsafe(24)
+    expires_at = datetime.utcnow() + timedelta(minutes=max(int(ttl_minutes), 1))
+    with get_session() as session:
+        login_token = AdminLoginToken(
+            tenant_id=tenant.id,
+            token=token,
+            expires_at=expires_at,
+            used=False,
+        )
+        session.add(login_token)
+        session.flush()
+        session.refresh(login_token)
+        return login_token
+
+
+def get_admin_login_token(token: str) -> Optional[AdminLoginToken]:
+    normalized = str(token or "").strip()
+    if not normalized:
+        return None
+
+    with get_session() as session:
+        login_token = (
+            session.execute(select(AdminLoginToken).where(AdminLoginToken.token == normalized))
+            .scalars()
+            .first()
+        )
+        if not login_token:
+            return None
+        if login_token.used:
+            return None
+        if login_token.expires_at <= datetime.utcnow():
+            return None
+        return login_token
+
+
+def mark_admin_login_token_used(token_id: int) -> bool:
+    with get_session() as session:
+        login_token = (
+            session.execute(select(AdminLoginToken).where(AdminLoginToken.id == token_id))
+            .scalars()
+            .first()
+        )
+        if not login_token:
+            return False
+        if login_token.used:
+            return False
+        login_token.used = True
+        session.flush()
+        return True
+
+
+def create_admin_session(tenant_id: int, ttl_days: int = ADMIN_SESSION_TTL_DAYS) -> AdminSession:
+    session_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(days=max(int(ttl_days), 1))
+    with get_session() as session:
+        admin_session = AdminSession(
+            tenant_id=tenant_id,
+            session_token=session_token,
+            expires_at=expires_at,
+        )
+        session.add(admin_session)
+        session.flush()
+        session.refresh(admin_session)
+        return admin_session
+
+
+def get_admin_session(session_token: str) -> Optional[AdminSession]:
+    normalized = str(session_token or "").strip()
+    if not normalized:
+        return None
+    with get_session() as session:
+        admin_session = (
+            session.execute(select(AdminSession).where(AdminSession.session_token == normalized))
+            .scalars()
+            .first()
+        )
+        if not admin_session:
+            return None
+        if admin_session.expires_at <= datetime.utcnow():
+            return None
+        return admin_session
 
 
 def list_enabled_bot_tenants() -> List[Tenant]:

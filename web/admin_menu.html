@@ -123,7 +123,6 @@
     const tenantSlug = decodeURIComponent(pathParts[3] || "");
     const searchParams = new URLSearchParams(window.location.search);
     const adminToken = searchParams.get("admin_token");
-    const adminChatId = searchParams.get("admin_chat_id");
 
     const globalStatus = document.getElementById("global-status");
     const categoryStatus = document.getElementById("category-status");
@@ -155,21 +154,18 @@
     const formHeading = document.getElementById("form-heading");
     const analyticsLink = document.getElementById("analytics-link");
     const publicLink = document.getElementById("public-link");
+    const accessDeniedMessage = "Access denied.";
 
     let categories = [];
     let items = [];
     let editingId = null;
 
-    function adminHeaders(extra = {}) {
-      const headers = { ...extra };
-      if (!adminToken) {
-        throw new Error("admin_token query param is required");
-      }
-      headers["x-admin-token"] = String(adminToken);
-      if (adminChatId) {
-        headers["x-admin-chat-id"] = String(adminChatId);
-      }
-      return headers;
+    function replaceUrlWithoutAdminToken() {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("admin_token");
+      const nextQuery = url.searchParams.toString();
+      const nextUrl = nextQuery ? `${url.pathname}?${nextQuery}` : url.pathname;
+      window.history.replaceState({}, "", nextUrl);
     }
 
     function sortCategories(source) {
@@ -193,6 +189,43 @@
 
     function setFormStatus(message) {
       formStatus.textContent = message || "";
+    }
+
+    function showAccessDenied(message = accessDeniedMessage) {
+      setGlobalStatus(message);
+      setCategoryStatus(message);
+      setFormStatus(message);
+      categoryList.innerHTML = "";
+      menuItemsBody.innerHTML = "";
+      tableMeta.textContent = "0 items";
+      categoryMeta.textContent = "0 categories";
+      emptyState.hidden = false;
+      emptyState.textContent = message;
+      saveBtn.disabled = true;
+      itemCategory.disabled = true;
+    }
+
+    async function bootstrapAdminAuth() {
+      if (!tenantSlug) {
+        showAccessDenied("Tenant slug missing in URL.");
+        return false;
+      }
+      if (!adminToken) {
+        return true;
+      }
+
+      const response = await fetch("/admin/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ token: adminToken, slug: tenantSlug }),
+      });
+      if (!response.ok) {
+        showAccessDenied();
+        return false;
+      }
+      replaceUrlWithoutAdminToken();
+      return true;
     }
 
     function setPreview(url) {
@@ -255,9 +288,13 @@
     async function apiCreateCategory(title) {
       const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories`, {
         method: "POST",
-        headers: adminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ title }),
       });
+      if (response.status === 401 || response.status === 403) {
+        showAccessDenied();
+      }
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         throw new Error(error.detail || "Category create failed.");
@@ -268,9 +305,13 @@
     async function apiUpdateCategory(categoryId, payload) {
       const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
         method: "PATCH",
-        headers: adminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload),
       });
+      if (response.status === 401 || response.status === 403) {
+        showAccessDenied();
+      }
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         throw new Error(error.detail || "Category update failed.");
@@ -281,8 +322,11 @@
     async function apiDeleteCategory(categoryId) {
       const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
         method: "DELETE",
-        headers: adminHeaders(),
+        credentials: "same-origin",
       });
+      if (response.status === 401 || response.status === 403) {
+        showAccessDenied();
+      }
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         throw new Error(error.detail || "Category delete failed.");
@@ -508,8 +552,12 @@
             setGlobalStatus("");
             const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
               method: "DELETE",
-              headers: adminHeaders(),
+              credentials: "same-origin",
             });
+            if (response.status === 401 || response.status === 403) {
+              showAccessDenied();
+              return;
+            }
             if (!response.ok) {
               setGlobalStatus("Delete failed.");
               return;
@@ -540,14 +588,14 @@
         setGlobalStatus("Tenant slug missing in URL.");
         return;
       }
-      if (!adminToken) {
-        setGlobalStatus("admin_token query param is required.");
-        return;
-      }
 
       const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
-        headers: adminHeaders(),
+        credentials: "same-origin",
       });
+      if (response.status === 401 || response.status === 403) {
+        showAccessDenied();
+        return;
+      }
       if (!response.ok) {
         setGlobalStatus("Menu admin data could not be loaded.");
         return;
@@ -581,9 +629,13 @@
 
       const response = await fetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
         method: "POST",
-        headers: adminHeaders(),
+        credentials: "same-origin",
         body: formData,
       });
+      if (response.status === 401 || response.status === 403) {
+        showAccessDenied();
+        return;
+      }
       if (!response.ok) {
         setFormStatus("Image upload failed.");
         uploadLabel.textContent = "No file selected";
@@ -639,10 +691,14 @@
 
       const response = await fetch(url, {
         method,
-        headers: adminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload),
       });
-
+      if (response.status === 401 || response.status === 403) {
+        showAccessDenied();
+        return;
+      }
       if (!response.ok) {
         setFormStatus(isUpdate ? "Update failed." : "Create failed.");
         return;
@@ -666,13 +722,23 @@
     resetBtn.addEventListener("click", resetForm);
 
     if (tenantSlug) {
-      const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
+      const params = new URLSearchParams(window.location.search);
+      params.delete("admin_token");
+      const suffix = params.toString() ? `?${params.toString()}` : "";
       analyticsLink.href = `/t/${encodeURIComponent(tenantSlug)}/admin${suffix}`;
       publicLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
     }
 
-    resetForm();
-    loadMenuAdmin();
+    async function boot() {
+      const ok = await bootstrapAdminAuth();
+      if (!ok) {
+        return;
+      }
+      resetForm();
+      await loadMenuAdmin();
+    }
+
+    boot();
   </script>
 </body>
 </html>

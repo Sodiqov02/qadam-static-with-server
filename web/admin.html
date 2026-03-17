@@ -108,33 +108,25 @@
 
   <script>
     const tenantSlug = decodeURIComponent(window.location.pathname.split("/")[2] || "");
-    const adminChatId = new URLSearchParams(window.location.search).get("admin_chat_id");
-    const adminToken = new URLSearchParams(window.location.search).get("admin_token");
+    const initialParams = new URLSearchParams(window.location.search);
+    const adminToken = initialParams.get("admin_token");
     const tenantRequiredError = "Tenant slug required. Open page as /t/<slug>/admin";
-    const adminRequiredError = "admin_token query param is required";
+    const accessDeniedError = "Access denied.";
 
     const tenantPath = (path) => {
       if (!tenantSlug) throw new Error(tenantRequiredError);
       return `/t/${encodeURIComponent(tenantSlug)}${path}`;
     };
 
-    const adminHeaders = (extra = {}) => {
-      if (!adminToken) throw new Error(adminRequiredError);
-      const headers = { ...extra, "x-admin-token": String(adminToken) };
-      if (adminChatId) {
-        headers["x-admin-chat-id"] = String(adminChatId);
-      }
-      return headers;
-    };
-
     const backLink = document.getElementById("back-to-menu");
     const menuManagerLink = document.getElementById("menu-manager-link");
+    const cleanedParams = new URLSearchParams(window.location.search);
+    cleanedParams.delete("admin_token");
     if (backLink && tenantSlug) {
       backLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
     }
     if (menuManagerLink && tenantSlug) {
-      const params = new URLSearchParams(window.location.search);
-      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const suffix = cleanedParams.toString() ? `?${cleanedParams.toString()}` : "";
       menuManagerLink.href = `/admin/menu/${encodeURIComponent(tenantSlug)}${suffix}`;
     }
 
@@ -150,19 +142,52 @@
 
     const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
 
+    function replaceUrlWithoutAdminToken() {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("admin_token");
+      const nextQuery = url.searchParams.toString();
+      const nextUrl = nextQuery ? `${url.pathname}?${nextQuery}` : url.pathname;
+      window.history.replaceState({}, "", nextUrl);
+    }
+
+    async function bootstrapAdminAuth() {
+      if (!tenantSlug) {
+        analyticsStatus.textContent = tenantRequiredError;
+        promoStatus.textContent = tenantRequiredError;
+        return false;
+      }
+      if (!adminToken) {
+        return true;
+      }
+
+      const res = await fetch("/admin/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ token: adminToken, slug: tenantSlug }),
+      });
+      if (!res.ok) {
+        analyticsStatus.textContent = accessDeniedError;
+        promoStatus.textContent = accessDeniedError;
+        return false;
+      }
+      replaceUrlWithoutAdminToken();
+      return true;
+    }
+
     async function loadAnalytics(range = "7d") {
       analyticsStatus.textContent = "";
       if (!tenantSlug) {
         analyticsStatus.textContent = tenantRequiredError;
         return;
       }
-      if (!adminToken) {
-        analyticsStatus.textContent = adminRequiredError;
+      const res = await fetch(`${tenantPath("/api/admin/analytics")}?range=${encodeURIComponent(range)}`, {
+        credentials: "same-origin",
+      });
+      if (res.status === 401) {
+        analyticsStatus.textContent = accessDeniedError;
         return;
       }
-      const res = await fetch(`${tenantPath("/api/admin/analytics")}?range=${encodeURIComponent(range)}`, {
-        headers: adminHeaders(),
-      });
       if (res.status === 403) {
         analyticsStatus.textContent = "Analytics unavailable for current plan or admin access.";
         return;
@@ -189,11 +214,11 @@
         promoStatus.textContent = tenantRequiredError;
         return;
       }
-      if (!adminToken) {
-        promoStatus.textContent = adminRequiredError;
+      const res = await fetch(tenantPath("/api/admin/promotions"), { credentials: "same-origin" });
+      if (res.status === 401) {
+        promoStatus.textContent = accessDeniedError;
         return;
       }
-      const res = await fetch(tenantPath("/api/admin/promotions"), { headers: adminHeaders() });
       if (res.status === 403) {
         promoStatus.textContent = "Promotions unavailable for current plan or admin access.";
         return;
@@ -242,10 +267,13 @@
     async function updatePromo(id, payload) {
       const res = await fetch(tenantPath(`/api/admin/promotions/${id}`), {
         method: "PATCH",
-        headers: adminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
+      if (res.status === 401) {
+        promoStatus.textContent = accessDeniedError;
+      } else if (!res.ok) {
         promoStatus.textContent = "Promo yangilashda xatolik.";
       }
     }
@@ -255,10 +283,6 @@
       promoStatus.textContent = "";
       if (!tenantSlug) {
         promoStatus.textContent = tenantRequiredError;
-        return;
-      }
-      if (!adminToken) {
-        promoStatus.textContent = adminRequiredError;
         return;
       }
 
@@ -281,9 +305,14 @@
 
       const res = await fetch(tenantPath("/api/admin/promotions"), {
         method: "POST",
-        headers: adminHeaders({ "Content-Type": "application/json" }),
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify(payload),
       });
+      if (res.status === 401) {
+        promoStatus.textContent = accessDeniedError;
+        return;
+      }
       if (!res.ok) {
         promoStatus.textContent = "Promo yaratishda xatolik.";
         return;
@@ -301,8 +330,16 @@
       });
     });
 
-    loadAnalytics("7d");
-    loadPromotions();
+    async function boot() {
+      const ok = await bootstrapAdminAuth();
+      if (!ok) {
+        return;
+      }
+      await loadAnalytics("7d");
+      await loadPromotions();
+    }
+
+    boot();
   </script>
 </body>
 </html>

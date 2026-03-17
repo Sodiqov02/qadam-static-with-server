@@ -2,13 +2,22 @@ from functools import wraps
 from aiogram import Router, types
 from aiogram.filters import Command
 
+from src.config import settings
 from src.db_models import Tenant
 from src.notifier import notify_order_status_changed
-from src.store import update_order_status
+from src.store import create_admin_login_token_for_tenant, update_order_status
 
 
 def create_admin_router(tenant: Tenant) -> Router:
     router = Router()
+
+    def _admin_menu_url(token: str) -> str:
+        base_url = (settings.API_BASE_URL or "").rstrip("/")
+        if base_url.endswith("/api"):
+            base_url = base_url[:-4]
+        if not base_url:
+            base_url = "http://localhost:8000"
+        return f"{base_url}/admin/menu/{tenant.slug}?admin_token={token}"
 
     def admin_only(func):
         @wraps(func)
@@ -82,5 +91,18 @@ def create_admin_router(tenant: Tenant) -> Router:
         if ok and order and new:
             await notify_order_status_changed(order.id, tenant.id, prev, new)
         await message.answer("Yakunlandi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
+
+    @router.message(Command("admin"))
+    @admin_only
+    async def admin_login_link(message: types.Message):
+        login_token = create_admin_login_token_for_tenant(tenant)
+        await message.answer(
+            "\n".join(
+                [
+                    "Admin login link (10 minutes, one-time use):",
+                    _admin_menu_url(login_token.token),
+                ]
+            )
+        )
 
     return router

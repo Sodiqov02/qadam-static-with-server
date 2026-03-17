@@ -136,3 +136,24 @@ class Promotion(Base):
     end_time = Column(Time, nullable=True)
     days_of_week = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
+
+
+class AdminLoginToken(Base):
+    __tablename__ = "admin_login_tokens"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    token = Column(String(255), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
+
+
+class AdminSession(Base):
+    __tablename__ = "admin_sessions"
+
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_token = Column(String(255), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)

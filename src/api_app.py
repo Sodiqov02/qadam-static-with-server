@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import dataclass
 from datetime import datetime, time
 import logging
 import os
@@ -11,7 +12,7 @@ from alembic import command
 from alembic.config import Config
 from aiogram.exceptions import TelegramAPIError
 from aiogram.utils.token import TokenValidationError
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -28,6 +29,7 @@ from src.store import (
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
+    create_admin_session,
     create_category_for_tenant,
     create_menu_item_for_tenant,
     create_reorder_for_phone,
@@ -35,10 +37,13 @@ from src.store import (
     create_reservation,
     delete_category_for_tenant,
     delete_menu_item_for_tenant,
+    get_admin_login_token,
     get_menu_admin_payload,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
+    get_admin_session,
     list_categories_for_tenant,
+    mark_admin_login_token_used,
     order_history_for_phone,
     list_reservations,
     list_promotions,
@@ -171,6 +176,21 @@ class CategoryOut(BaseModel):
     items_count: int = 0
 
 
+class AdminLoginRequest(BaseModel):
+    token: str
+    slug: str | None = None
+
+
+@dataclass
+class AdminAuthContext:
+    tenant_id: int | None
+    source: str
+
+
+ADMIN_SESSION_COOKIE = "admin_session"
+ADMIN_SESSION_MAX_AGE = 7 * 24 * 60 * 60
+
+
 def _tenant_public(tenant):
     features = getattr(tenant, "features", {}) or {}
     description = features.get("description") if isinstance(features.get("description"), str) else None
@@ -204,17 +224,63 @@ def _admin_tenant_lookup(slug: str) -> Tenant:
     return tenant
 
 
-def require_admin(x_admin_token: str | None = Header(default=None)):
-    # security fix
-    if x_admin_token != ADMIN_SECRET:
+def _set_admin_session_cookie(response: Response, session_token: str) -> None:
+    response.set_cookie(
+        key=ADMIN_SESSION_COOKIE,
+        value=session_token,
+        max_age=ADMIN_SESSION_MAX_AGE,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_admin_session_cookie(response: Response) -> None:
+    response.delete_cookie(key=ADMIN_SESSION_COOKIE, path="/", samesite="lax")
+
+
+def _assert_admin_access(admin: AdminAuthContext, tenant: Tenant) -> None:
+    if admin.tenant_id is None:
+        return
+    if int(admin.tenant_id) != int(tenant.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+@app.middleware("http")
+async def admin_session_middleware(request: Request, call_next):
+    request.state.admin_session = None
+    request.state.clear_admin_session_cookie = False
+    session_token = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if session_token:
+        admin_session = get_admin_session(session_token)
+        if admin_session:
+            request.state.admin_session = admin_session
+        else:
+            request.state.clear_admin_session_cookie = True
+
+    response = await call_next(request)
+    if getattr(request.state, "clear_admin_session_cookie", False):
+        _clear_admin_session_cookie(response)
+    return response
+
+
+def require_admin(request: Request, x_admin_token: str | None = Header(default=None)) -> AdminAuthContext:
+    admin_session = getattr(request.state, "admin_session", None)
+    if admin_session is not None:
+        return AdminAuthContext(tenant_id=admin_session.tenant_id, source="session")
+
+    # Deprecated fallback for existing admin clients.
+    if x_admin_token != ADMIN_SECRET:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    return AdminAuthContext(tenant_id=None, source="legacy_token")
 
 
 def _admin_tenant_dep(
     slug: str,
     tenant=Depends(_tenant_dep),
-    _=Depends(require_admin),
+    admin: AdminAuthContext = Depends(require_admin),
 ):
+    _assert_admin_access(admin, tenant)
     return tenant
 
 
@@ -375,6 +441,37 @@ def get_tenant_by_slug_public(slug: str, tenant=Depends(_tenant_dep)):
     return _tenant_public(tenant)
 
 
+@app.post("/admin/auth/login")
+def admin_auth_login(payload: AdminLoginRequest, response: Response):
+    raw_token = str(payload.token or "").strip()
+    normalized_slug = str(payload.slug or "").strip() or None
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+
+    tenant: Tenant | None = None
+    login_token = get_admin_login_token(raw_token)
+    if login_token is not None:
+        with get_session() as session:
+            tenant = session.execute(
+                select(Tenant).where(Tenant.id == login_token.tenant_id, Tenant.is_active.is_(True))
+            ).scalar_one_or_none()
+        if normalized_slug and tenant is not None and tenant.slug != normalized_slug:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+        if tenant is not None and not mark_admin_login_token_used(login_token.id):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+    elif raw_token == ADMIN_SECRET:
+        if not normalized_slug:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="slug is required for legacy admin token")
+        tenant = _admin_tenant_lookup(normalized_slug)
+
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired admin token")
+
+    admin_session = create_admin_session(tenant.id)
+    _set_admin_session_cookie(response, admin_session.session_token)
+    return {"ok": True, "tenant_slug": tenant.slug, "expires_at": admin_session.expires_at.isoformat()}
+
+
 @app.get("/t/{slug}/categories")
 def get_categories_by_slug(slug: str, tenant=Depends(_tenant_dep)):
     return {"items": list_categories_for_tenant(tenant)}
@@ -463,9 +560,10 @@ async def admin_upload_file(
 async def upload_menu_image_admin(
     tenant: str,
     file: UploadFile = File(...),
-    _=Depends(require_admin),
+    admin: AdminAuthContext = Depends(require_admin),
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
+    _assert_admin_access(admin, tenant_obj)
     image_path, image_url = _save_menu_image_file(tenant_obj.slug, file)
     await file.close()
     return {
@@ -506,9 +604,10 @@ def admin_update_menu_item(slug: str, item_id: int, payload: MenuItemAdminUpdate
 def admin_menu_get(
     tenant: str,
     include_inactive: bool = False,
-    _=Depends(require_admin),
+    admin: AdminAuthContext = Depends(require_admin),
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
+    _assert_admin_access(admin, tenant_obj)
     return get_menu_admin_payload(tenant_obj, include_inactive=include_inactive)
 
 
@@ -516,9 +615,10 @@ def admin_menu_get(
 def admin_menu_create(
     tenant: str,
     payload: MenuItemAdminPayload,
-    _=Depends(require_admin),
+    admin: AdminAuthContext = Depends(require_admin),
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
+    _assert_admin_access(admin, tenant_obj)
     data = payload.model_dump()
     data["image_path"] = _validate_menu_image_path(data.get("image_path"), tenant_obj.slug)
     try:
@@ -533,9 +633,10 @@ def admin_menu_update(
     tenant: str,
     item_id: int,
     payload: MenuItemAdminPayload,
-    _=Depends(require_admin),
+    admin: AdminAuthContext = Depends(require_admin),
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
+    _assert_admin_access(admin, tenant_obj)
     data = payload.model_dump()
     data["image_path"] = _validate_menu_image_path(data.get("image_path"), tenant_obj.slug)
     try:
@@ -551,9 +652,10 @@ def admin_menu_update(
 def admin_menu_delete(
     tenant: str,
     item_id: int,
-    _=Depends(require_admin),
+    admin: AdminAuthContext = Depends(require_admin),
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
+    _assert_admin_access(admin, tenant_obj)
     ok = delete_menu_item_for_tenant(tenant_obj, item_id)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
