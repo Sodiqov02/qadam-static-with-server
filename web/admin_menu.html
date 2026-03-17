@@ -25,6 +25,28 @@
 
       <section class="menu-admin-shell">
         <aside class="menu-admin-form-panel">
+          <section class="orders-panel category-manager-panel">
+            <div class="menu-table-toolbar">
+              <div>
+                <h3>Categories</h3>
+                <p class="muted" id="category-meta">0 categories</p>
+              </div>
+            </div>
+
+            <form id="category-form" class="form category-form">
+              <div class="field">
+                <label for="category-name">Add category</label>
+                <div class="inline-form-row">
+                  <input id="category-name" name="title" placeholder="Main dishes" required />
+                  <button type="submit" id="category-save-btn">Add category</button>
+                </div>
+              </div>
+              <p class="muted status" id="category-status"></p>
+            </form>
+
+            <div id="category-list" class="category-list"></div>
+          </section>
+
           <div class="orders-panel">
             <h3 id="form-heading">New item</h3>
             <form id="menu-form" class="form">
@@ -49,7 +71,7 @@
               <div class="field">
                 <label>Image</label>
                 <div class="upload-row">
-                  <button type="button" class="secondary-btn" id="upload-trigger">Upload Image</button>
+                  <button type="button" class="secondary-btn" id="upload-trigger">Upload image</button>
                   <span class="muted" id="upload-label">No file selected</span>
                 </div>
                 <input id="image-upload" type="file" accept="image/*" hidden />
@@ -99,16 +121,22 @@
   <script>
     const pathParts = window.location.pathname.split("/");
     const tenantSlug = decodeURIComponent(pathParts[3] || "");
-    const adminToken = new URLSearchParams(window.location.search).get("admin_token");
-    const adminChatId = new URLSearchParams(window.location.search).get("admin_chat_id");
+    const searchParams = new URLSearchParams(window.location.search);
+    const adminToken = searchParams.get("admin_token");
+    const adminChatId = searchParams.get("admin_chat_id");
 
     const globalStatus = document.getElementById("global-status");
+    const categoryStatus = document.getElementById("category-status");
     const formStatus = document.getElementById("form-status");
     const pageTitle = document.getElementById("page-title");
     const pageSubtitle = document.getElementById("page-subtitle");
     const tableMeta = document.getElementById("table-meta");
+    const categoryMeta = document.getElementById("category-meta");
     const menuItemsBody = document.getElementById("menu-items-body");
     const emptyState = document.getElementById("empty-state");
+    const categoryList = document.getElementById("category-list");
+    const categoryForm = document.getElementById("category-form");
+    const categoryNameInput = document.getElementById("category-name");
     const menuForm = document.getElementById("menu-form");
     const itemName = document.getElementById("item-name");
     const itemPrice = document.getElementById("item-price");
@@ -144,8 +172,23 @@
       return headers;
     }
 
+    function sortCategories(source) {
+      return [...source].sort((left, right) => {
+        const leftOrder = Number(left.sort_order ?? left.sort ?? 0);
+        const rightOrder = Number(right.sort_order ?? right.sort ?? 0);
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return Number(left.id || 0) - Number(right.id || 0);
+      });
+    }
+
     function setGlobalStatus(message) {
       globalStatus.textContent = message || "";
+    }
+
+    function setCategoryStatus(message) {
+      categoryStatus.textContent = message || "";
     }
 
     function setFormStatus(message) {
@@ -177,6 +220,15 @@
       setFormStatus("");
     }
 
+    function findCategoryTitle(categoryId) {
+      const category = categories.find((item) => Number(item.id) === Number(categoryId));
+      return category ? category.title : `#${categoryId}`;
+    }
+
+    function countItemsForCategory(categoryId) {
+      return items.filter((item) => Number(item.category_id) === Number(categoryId)).length;
+    }
+
     function fillCategoryOptions() {
       itemCategory.innerHTML = "";
       categories.forEach((category) => {
@@ -193,62 +245,138 @@
       return `${Number(value || 0).toLocaleString("ru-RU")} so'm`;
     }
 
-    function renderItems() {
-      menuItemsBody.innerHTML = "";
-      tableMeta.textContent = `${items.length} items`;
-      emptyState.hidden = items.length > 0;
+    function createPlaceholderThumb(label) {
+      const thumb = document.createElement("div");
+      thumb.className = "image-thumb image-thumb-fallback";
+      thumb.textContent = label || "No image";
+      return thumb;
+    }
 
-      items.forEach((item) => {
-        const row = document.createElement("tr");
+    async function apiCreateCategory(title) {
+      const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ title }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || "Category create failed.");
+      }
+      return response.json();
+    }
 
-        const imageCell = document.createElement("td");
-        const thumb = document.createElement(item.image ? "img" : "div");
-        thumb.className = item.image ? "image-thumb" : "image-thumb image-thumb-fallback";
-        if (item.image) {
-          thumb.src = item.image;
-          thumb.alt = item.name || "";
-          thumb.loading = "lazy";
-        } else {
-          thumb.textContent = "No image";
-        }
-        imageCell.appendChild(thumb);
+    async function apiUpdateCategory(categoryId, payload) {
+      const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
+        method: "PATCH",
+        headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || "Category update failed.");
+      }
+      return response.json();
+    }
 
-        const nameCell = document.createElement("td");
-        const nameStrong = document.createElement("strong");
-        nameStrong.textContent = item.name || "";
-        const descriptionBlock = document.createElement("div");
-        descriptionBlock.className = "muted";
-        descriptionBlock.textContent = item.description || "";
-        nameCell.appendChild(nameStrong);
-        nameCell.appendChild(descriptionBlock);
+    async function apiDeleteCategory(categoryId) {
+      const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
+        method: "DELETE",
+        headers: adminHeaders(),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || "Category delete failed.");
+      }
+      return response.json();
+    }
 
-        const categoryCell = document.createElement("td");
-        categoryCell.textContent = item.category_title || `#${item.category_id}`;
+    async function moveCategory(categoryId, direction) {
+      const ordered = sortCategories(categories);
+      const index = ordered.findIndex((category) => Number(category.id) === Number(categoryId));
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (index < 0 || targetIndex < 0 || targetIndex >= ordered.length) {
+        return;
+      }
+      const current = ordered[index];
+      const target = ordered[targetIndex];
+      const currentOrder = Number(current.sort_order ?? current.sort ?? 0);
+      const targetOrder = Number(target.sort_order ?? target.sort ?? 0);
+      await apiUpdateCategory(current.id, { sort_order: targetOrder });
+      await apiUpdateCategory(target.id, { sort_order: currentOrder });
+      await loadMenuAdmin();
+    }
 
-        const priceCell = document.createElement("td");
-        priceCell.textContent = formatPrice(item.price);
+    function renderCategories() {
+      categoryList.innerHTML = "";
+      categoryMeta.textContent = `${categories.length} categories`;
 
-        const actionsCell = document.createElement("td");
+      if (!categories.length) {
+        categoryList.innerHTML = '<div class="empty-state compact">No categories yet.</div>';
+        return;
+      }
+
+      categories.forEach((category, index) => {
+        const card = document.createElement("div");
+        card.className = "category-row";
+
+        const info = document.createElement("div");
+        info.className = "category-row-main";
+        const title = document.createElement("strong");
+        title.textContent = category.title || "";
+        const meta = document.createElement("div");
+        meta.className = "muted";
+        meta.textContent = `${countItemsForCategory(category.id)} items`;
+        info.appendChild(title);
+        info.appendChild(meta);
+
         const actions = document.createElement("div");
         actions.className = "inline-actions";
 
-        const editBtn = document.createElement("button");
-        editBtn.type = "button";
-        editBtn.className = "secondary-btn";
-        editBtn.textContent = "Edit";
-        editBtn.addEventListener("click", () => {
-          editingId = item.id;
-          formHeading.textContent = `Edit item #${item.id}`;
-          saveBtn.textContent = "Update item";
-          itemName.value = item.name || "";
-          itemPrice.value = item.price ?? "";
-          itemCategory.value = String(item.category_id || "");
-          itemDescription.value = item.description || "";
-          itemImagePath.value = item.image_path || "";
-          uploadLabel.textContent = item.image_path || "No file selected";
-          setPreview(item.image || item.image_url || "");
-          setFormStatus("");
-          window.scrollTo({ top: 0, behavior: "auto" });
+        const upBtn = document.createElement("button");
+        upBtn.type = "button";
+        upBtn.className = "secondary-btn";
+        upBtn.textContent = "Up";
+        upBtn.disabled = index === 0;
+        upBtn.addEventListener("click", async () => {
+          setCategoryStatus("");
+          try {
+            await moveCategory(category.id, "up");
+          } catch (error) {
+            setCategoryStatus(error.message || "Category reorder failed.");
+          }
+        });
+
+        const downBtn = document.createElement("button");
+        downBtn.type = "button";
+        downBtn.className = "secondary-btn";
+        downBtn.textContent = "Down";
+        downBtn.disabled = index === categories.length - 1;
+        downBtn.addEventListener("click", async () => {
+          setCategoryStatus("");
+          try {
+            await moveCategory(category.id, "down");
+          } catch (error) {
+            setCategoryStatus(error.message || "Category reorder failed.");
+          }
+        });
+
+        const renameBtn = document.createElement("button");
+        renameBtn.type = "button";
+        renameBtn.className = "secondary-btn";
+        renameBtn.textContent = "Rename";
+        renameBtn.addEventListener("click", async () => {
+          const nextTitle = window.prompt("New category name", category.title || "");
+          if (!nextTitle) {
+            return;
+          }
+          setCategoryStatus("");
+          try {
+            await apiUpdateCategory(category.id, { title: nextTitle.trim() });
+            await loadMenuAdmin();
+            setCategoryStatus("Category updated.");
+          } catch (error) {
+            setCategoryStatus(error.message || "Category update failed.");
+          }
         });
 
         const deleteBtn = document.createElement("button");
@@ -256,34 +384,154 @@
         deleteBtn.className = "danger-btn";
         deleteBtn.textContent = "Delete";
         deleteBtn.addEventListener("click", async () => {
-          const confirmed = window.confirm(`Delete "${item.name}"?`);
-          if (!confirmed) return;
-          setGlobalStatus("");
-          const res = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
-            method: "DELETE",
-            headers: adminHeaders(),
-          });
-          if (!res.ok) {
-            setGlobalStatus("Delete failed.");
+          const confirmed = window.confirm(`Delete "${category.title}"?`);
+          if (!confirmed) {
             return;
           }
-          if (editingId === item.id) {
-            resetForm();
+          setCategoryStatus("");
+          try {
+            await apiDeleteCategory(category.id);
+            if (Number(itemCategory.value) === Number(category.id)) {
+              itemCategory.value = "";
+            }
+            await loadMenuAdmin();
+            setCategoryStatus("Category deleted.");
+          } catch (error) {
+            setCategoryStatus(error.message || "Category delete failed.");
           }
-          await loadMenuAdmin();
-          setGlobalStatus("Item deleted.");
         });
 
-        actions.appendChild(editBtn);
+        actions.appendChild(upBtn);
+        actions.appendChild(downBtn);
+        actions.appendChild(renameBtn);
         actions.appendChild(deleteBtn);
-        actionsCell.appendChild(actions);
 
-        row.appendChild(imageCell);
-        row.appendChild(nameCell);
-        row.appendChild(categoryCell);
-        row.appendChild(priceCell);
-        row.appendChild(actionsCell);
-        menuItemsBody.appendChild(row);
+        card.appendChild(info);
+        card.appendChild(actions);
+        categoryList.appendChild(card);
+      });
+    }
+
+    function renderItems() {
+      menuItemsBody.innerHTML = "";
+      tableMeta.textContent = `${items.length} items`;
+      emptyState.hidden = items.length > 0;
+
+      if (!items.length) {
+        return;
+      }
+
+      categories.forEach((category) => {
+        const groupItems = items.filter((item) => Number(item.category_id) === Number(category.id));
+        const groupRow = document.createElement("tr");
+        groupRow.className = "category-group-row";
+
+        const groupCell = document.createElement("td");
+        groupCell.colSpan = 5;
+        groupCell.innerHTML = `<strong>${category.title || ""}</strong><span class="muted group-meta">${groupItems.length} items</span>`;
+        groupRow.appendChild(groupCell);
+        menuItemsBody.appendChild(groupRow);
+
+        if (!groupItems.length) {
+          const emptyRow = document.createElement("tr");
+          const emptyCell = document.createElement("td");
+          emptyCell.colSpan = 5;
+          emptyCell.className = "muted";
+          emptyCell.textContent = "No items in this category yet.";
+          emptyRow.appendChild(emptyCell);
+          menuItemsBody.appendChild(emptyRow);
+          return;
+        }
+
+        groupItems.forEach((item) => {
+          const row = document.createElement("tr");
+
+          const imageCell = document.createElement("td");
+          if (item.image) {
+            const thumb = document.createElement("img");
+            thumb.className = "image-thumb";
+            thumb.src = item.image;
+            thumb.alt = item.name || "";
+            thumb.loading = "lazy";
+            imageCell.appendChild(thumb);
+          } else {
+            imageCell.appendChild(createPlaceholderThumb("No image"));
+          }
+
+          const nameCell = document.createElement("td");
+          const nameStrong = document.createElement("strong");
+          nameStrong.textContent = item.name || "";
+          const descriptionBlock = document.createElement("div");
+          descriptionBlock.className = "muted";
+          descriptionBlock.textContent = item.description || "";
+          nameCell.appendChild(nameStrong);
+          nameCell.appendChild(descriptionBlock);
+
+          const categoryCell = document.createElement("td");
+          categoryCell.textContent = findCategoryTitle(item.category_id);
+
+          const priceCell = document.createElement("td");
+          priceCell.textContent = formatPrice(item.price);
+
+          const actionsCell = document.createElement("td");
+          const actions = document.createElement("div");
+          actions.className = "inline-actions";
+
+          const editBtn = document.createElement("button");
+          editBtn.type = "button";
+          editBtn.className = "secondary-btn";
+          editBtn.textContent = "Edit";
+          editBtn.addEventListener("click", () => {
+            editingId = item.id;
+            formHeading.textContent = `Edit item #${item.id}`;
+            saveBtn.textContent = "Update item";
+            itemName.value = item.name || "";
+            itemPrice.value = item.price ?? "";
+            itemCategory.value = String(item.category_id || "");
+            itemDescription.value = item.description || "";
+            itemImagePath.value = item.image_path || "";
+            uploadLabel.textContent = item.image_path || "No file selected";
+            setPreview(item.image || item.image_url || "");
+            setFormStatus("");
+            window.scrollTo({ top: 0, behavior: "auto" });
+          });
+
+          const deleteBtn = document.createElement("button");
+          deleteBtn.type = "button";
+          deleteBtn.className = "danger-btn";
+          deleteBtn.textContent = "Delete";
+          deleteBtn.addEventListener("click", async () => {
+            const confirmed = window.confirm(`Delete "${item.name}"?`);
+            if (!confirmed) {
+              return;
+            }
+            setGlobalStatus("");
+            const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
+              method: "DELETE",
+              headers: adminHeaders(),
+            });
+            if (!response.ok) {
+              setGlobalStatus("Delete failed.");
+              return;
+            }
+            if (editingId === item.id) {
+              resetForm();
+            }
+            await loadMenuAdmin();
+            setGlobalStatus("Item deleted.");
+          });
+
+          actions.appendChild(editBtn);
+          actions.appendChild(deleteBtn);
+          actionsCell.appendChild(actions);
+
+          row.appendChild(imageCell);
+          row.appendChild(nameCell);
+          row.appendChild(categoryCell);
+          row.appendChild(priceCell);
+          row.appendChild(actionsCell);
+          menuItemsBody.appendChild(row);
+        });
       });
     }
 
@@ -297,20 +545,26 @@
         return;
       }
 
-      const res = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
+      const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
         headers: adminHeaders(),
       });
-      if (!res.ok) {
+      if (!response.ok) {
         setGlobalStatus("Menu admin data could not be loaded.");
         return;
       }
 
-      const data = await res.json();
-      categories = data.categories || [];
-      items = data.items || [];
+      const data = await response.json();
+      categories = sortCategories(data.categories || []);
+      items = [...(data.items || [])].sort((left, right) => {
+        if (Number(left.category_id || 0) !== Number(right.category_id || 0)) {
+          return Number(left.category_id || 0) - Number(right.category_id || 0);
+        }
+        return Number(left.id || 0) - Number(right.id || 0);
+      });
       pageTitle.textContent = `${data.tenant?.name || tenantSlug} menu`;
       pageSubtitle.textContent = `Tenant slug: ${data.tenant?.slug || tenantSlug}`;
       fillCategoryOptions();
+      renderCategories();
       renderItems();
       if (!categories.length) {
         setGlobalStatus("No categories found for this tenant.");
@@ -325,22 +579,40 @@
       setFormStatus("Uploading image...");
       uploadLabel.textContent = file.name;
 
-      const res = await fetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
+      const response = await fetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
         method: "POST",
         headers: adminHeaders(),
         body: formData,
       });
-      if (!res.ok) {
+      if (!response.ok) {
         setFormStatus("Image upload failed.");
         uploadLabel.textContent = "No file selected";
         return;
       }
-      const data = await res.json();
+      const data = await response.json();
       itemImagePath.value = data.image_path || "";
       setPreview(data.image || "");
       uploadLabel.textContent = data.image_path || file.name;
       setFormStatus("Image uploaded.");
     }
+
+    categoryForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setCategoryStatus("");
+      const title = (categoryNameInput.value || "").trim();
+      if (!title) {
+        setCategoryStatus("Category name is required.");
+        return;
+      }
+      try {
+        await apiCreateCategory(title);
+        categoryForm.reset();
+        await loadMenuAdmin();
+        setCategoryStatus("Category created.");
+      } catch (error) {
+        setCategoryStatus(error.message || "Category create failed.");
+      }
+    });
 
     menuForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -365,13 +637,13 @@
         : `/admin/api/menu/${encodeURIComponent(tenantSlug)}`;
       const method = isUpdate ? "PUT" : "POST";
 
-      const res = await fetch(url, {
+      const response = await fetch(url, {
         method,
         headers: adminHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) {
+      if (!response.ok) {
         setFormStatus(isUpdate ? "Update failed." : "Create failed.");
         return;
       }
@@ -394,8 +666,7 @@
     resetBtn.addEventListener("click", resetForm);
 
     if (tenantSlug) {
-      const params = new URLSearchParams(window.location.search);
-      const suffix = params.toString() ? `?${params.toString()}` : "";
+      const suffix = searchParams.toString() ? `?${searchParams.toString()}` : "";
       analyticsLink.href = `/t/${encodeURIComponent(tenantSlug)}/admin${suffix}`;
       publicLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
     }

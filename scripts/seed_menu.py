@@ -48,7 +48,7 @@ def seed_menu(slug: str) -> dict:
         for title, sort in CATEGORIES_DATA:
             if title in categories_by_title:
                 continue
-            category = MenuCategory(tenant_id=tenant.id, title=title, sort=sort)
+            category = MenuCategory(tenant_id=tenant.id, title=title, sort=sort, sort_order=sort)
             session.add(category)
             session.flush()
             categories_by_title[title] = category

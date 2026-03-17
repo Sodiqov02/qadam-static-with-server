@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import logging
 from urllib.parse import quote, unquote
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import NoResultFound
 
 from src.db import get_session
@@ -44,6 +44,13 @@ STATUS_TRANSITIONS = {
     "CANCELED": set(),
 }
 logger = logging.getLogger(__name__)
+
+
+def _category_sort_value(category: MenuCategory) -> int:
+    sort_order = getattr(category, "sort_order", None)
+    if sort_order is None:
+        sort_order = getattr(category, "sort", 0)
+    return int(sort_order or 0)
 
 
 def _menu_image_url_from_path(image_path: str | None) -> str | None:
@@ -183,9 +190,9 @@ def bootstrap_tenant(
         }
         categories_created = 0
         next_sort = session.execute(
-            select(MenuCategory.sort)
+            select(MenuCategory.sort_order)
             .where(MenuCategory.tenant_id == tenant.id)
-            .order_by(MenuCategory.sort.desc(), MenuCategory.id.desc())
+            .order_by(MenuCategory.sort_order.desc(), MenuCategory.sort.desc(), MenuCategory.id.desc())
             .limit(1)
         ).scalar_one_or_none()
         sort_value = int(next_sort or -1) + 1
@@ -197,6 +204,7 @@ def bootstrap_tenant(
                     tenant_id=tenant.id,
                     title=title,
                     sort=sort_value,
+                    sort_order=sort_value,
                 )
             )
             sort_value += 1
@@ -214,7 +222,9 @@ def bootstrap_tenant(
 def _menu_from_db(tenant_id: int) -> List[Dict[str, Any]]:
     with get_session() as session:
         categories = session.execute(
-            select(MenuCategory).where(MenuCategory.tenant_id == tenant_id).order_by(MenuCategory.sort, MenuCategory.id)
+            select(MenuCategory)
+            .where(MenuCategory.tenant_id == tenant_id)
+            .order_by(MenuCategory.sort_order, MenuCategory.sort, MenuCategory.id)
         ).scalars().all()
         if not categories:
             return []
@@ -275,6 +285,7 @@ def _serialize_menu_category(category: MenuCategory) -> Dict[str, Any]:
         "id": category.id,
         "title": category.title,
         "sort": int(category.sort or 0),
+        "sort_order": _category_sort_value(category),
     }
 
 
@@ -301,7 +312,7 @@ def list_menu_categories_for_tenant(tenant: Tenant) -> List[Dict[str, Any]]:
             session.execute(
                 select(MenuCategory)
                 .where(MenuCategory.tenant_id == tenant.id)
-                .order_by(MenuCategory.sort, MenuCategory.id)
+                .order_by(MenuCategory.sort_order, MenuCategory.sort, MenuCategory.id)
             )
             .scalars()
             .all()
@@ -315,7 +326,7 @@ def list_menu_items_for_tenant_admin(tenant: Tenant, *, include_inactive: bool =
             session.execute(
                 select(MenuCategory)
                 .where(MenuCategory.tenant_id == tenant.id)
-                .order_by(MenuCategory.sort, MenuCategory.id)
+                .order_by(MenuCategory.sort_order, MenuCategory.sort, MenuCategory.id)
             )
             .scalars()
             .all()
@@ -341,9 +352,140 @@ def get_menu_admin_payload(tenant: Tenant, *, include_inactive: bool = False) ->
             "slug": tenant.slug,
             "name": tenant.name,
         },
-        "categories": list_menu_categories_for_tenant(tenant),
+        "categories": list_categories_for_tenant(tenant),
         "items": list_menu_items_for_tenant_admin(tenant, include_inactive=include_inactive),
     }
+
+
+def list_categories_for_tenant(tenant: Tenant) -> List[Dict[str, Any]]:
+    with get_session() as session:
+        categories = (
+            session.execute(
+                select(MenuCategory)
+                .where(MenuCategory.tenant_id == tenant.id)
+                .order_by(MenuCategory.sort_order, MenuCategory.sort, MenuCategory.id)
+            )
+            .scalars()
+            .all()
+        )
+        item_counts = {
+            category_id: count
+            for category_id, count in session.execute(
+                select(MenuItem.category_id, func.count(MenuItem.id))
+                .where(MenuItem.tenant_id == tenant.id)
+                .group_by(MenuItem.category_id)
+            ).all()
+        }
+    result = []
+    for category in categories:
+        payload = _serialize_menu_category(category)
+        payload["items_count"] = int(item_counts.get(category.id, 0))
+        result.append(payload)
+    return result
+
+
+def create_category_for_tenant(tenant: Tenant, payload: Dict[str, Any]) -> MenuCategory:
+    with get_session() as session:
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            raise ValueError("Category title is required")
+
+        existing = session.execute(
+            select(MenuCategory).where(MenuCategory.tenant_id == tenant.id, MenuCategory.title == title)
+        ).scalar_one_or_none()
+        if existing:
+            raise ValueError("Category with this title already exists")
+
+        sort_order = payload.get("sort_order")
+        if sort_order is None:
+            current_max = session.execute(
+                select(MenuCategory.sort_order)
+                .where(MenuCategory.tenant_id == tenant.id)
+                .order_by(MenuCategory.sort_order.desc(), MenuCategory.sort.desc(), MenuCategory.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            sort_order = int(current_max or -1) + 1
+        else:
+            try:
+                sort_order = int(sort_order)
+            except (TypeError, ValueError):
+                raise ValueError("sort_order must be an integer")
+
+        category = MenuCategory(
+            tenant_id=tenant.id,
+            title=title,
+            sort=sort_order,
+            sort_order=sort_order,
+        )
+        session.add(category)
+        session.flush()
+        session.refresh(category)
+        return category
+
+
+def update_category_for_tenant(tenant: Tenant, category_id: int, payload: Dict[str, Any]) -> MenuCategory:
+    with get_session() as session:
+        category = (
+            session.execute(
+                select(MenuCategory).where(MenuCategory.tenant_id == tenant.id, MenuCategory.id == category_id)
+            )
+            .scalars()
+            .first()
+        )
+        if not category:
+            raise NoResultFound()
+
+        if "title" in payload:
+            title = str(payload.get("title") or "").strip()
+            if not title:
+                raise ValueError("Category title is required")
+            duplicate = session.execute(
+                select(MenuCategory).where(
+                    MenuCategory.tenant_id == tenant.id,
+                    MenuCategory.title == title,
+                    MenuCategory.id != category_id,
+                )
+            ).scalar_one_or_none()
+            if duplicate:
+                raise ValueError("Category with this title already exists")
+            category.title = title
+
+        if "sort_order" in payload:
+            try:
+                sort_order = int(payload.get("sort_order"))
+            except (TypeError, ValueError):
+                raise ValueError("sort_order must be an integer")
+            category.sort_order = sort_order
+            category.sort = sort_order
+
+        session.flush()
+        session.refresh(category)
+        return category
+
+
+def delete_category_for_tenant(tenant: Tenant, category_id: int) -> tuple[bool, str | None]:
+    with get_session() as session:
+        category = (
+            session.execute(
+                select(MenuCategory).where(MenuCategory.tenant_id == tenant.id, MenuCategory.id == category_id)
+            )
+            .scalars()
+            .first()
+        )
+        if not category:
+            return False, "not_found"
+
+        has_items = session.execute(
+            select(MenuItem.id)
+            .where(MenuItem.tenant_id == tenant.id, MenuItem.category_id == category_id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if has_items is not None:
+            return False, "has_items"
+
+        session.delete(category)
+        session.flush()
+        return True, None
 
 
 def _price_lookup(tenant: Tenant) -> Dict[str, Dict[str, Any]]:

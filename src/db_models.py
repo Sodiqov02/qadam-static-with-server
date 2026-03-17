@@ -47,6 +47,7 @@ class MenuCategory(Base):
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(255), nullable=False)
     sort = Column(Integer, nullable=False, default=0)
+    sort_order = Column(Integer, nullable=False, default=0)
 
     tenant = relationship("Tenant", back_populates="categories")
     items = relationship("MenuItem", back_populates="category")

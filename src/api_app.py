@@ -28,19 +28,23 @@ from src.store import (
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
+    create_category_for_tenant,
     create_menu_item_for_tenant,
     create_reorder_for_phone,
     create_promotion,
     create_reservation,
+    delete_category_for_tenant,
     delete_menu_item_for_tenant,
     get_menu_admin_payload,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
+    list_categories_for_tenant,
     order_history_for_phone,
     list_reservations,
     list_promotions,
     serialize_menu_item,
     serialize_promotion,
+    update_category_for_tenant,
     update_menu_item_for_tenant,
     update_tenant_public_profile,
     update_order_status,
@@ -147,6 +151,24 @@ class MenuItemAdminPayload(BaseModel):
     image_path: str | None = None
     description: str | None = None
     is_available: bool = True
+
+
+class CategoryPayload(BaseModel):
+    title: str
+    sort_order: int | None = None
+
+
+class CategoryUpdatePayload(BaseModel):
+    title: str | None = None
+    sort_order: int | None = None
+
+
+class CategoryOut(BaseModel):
+    id: int
+    title: str
+    sort: int
+    sort_order: int
+    items_count: int = 0
 
 
 def _tenant_public(tenant):
@@ -351,6 +373,57 @@ def get_menu_by_slug(slug: str, tenant=Depends(_tenant_dep)):
 @app.get("/t/{slug}/tenant", response_model=TenantPublic)
 def get_tenant_by_slug_public(slug: str, tenant=Depends(_tenant_dep)):
     return _tenant_public(tenant)
+
+
+@app.get("/t/{slug}/categories")
+def get_categories_by_slug(slug: str, tenant=Depends(_tenant_dep)):
+    return {"items": list_categories_for_tenant(tenant)}
+
+
+@app.post("/t/{slug}/categories", response_model=CategoryOut)
+def create_category_api(slug: str, payload: CategoryPayload, tenant=Depends(_admin_tenant_dep)):
+    try:
+        category = create_category_for_tenant(tenant, payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    category_payload = next((item for item in list_categories_for_tenant(tenant) if item["id"] == category.id), None)
+    if not category_payload:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Category created but could not be loaded")
+    return category_payload
+
+
+@app.patch("/t/{slug}/categories/{category_id}", response_model=CategoryOut)
+def update_category_api(
+    slug: str,
+    category_id: int,
+    payload: CategoryUpdatePayload,
+    tenant=Depends(_admin_tenant_dep),
+):
+    update_data = payload.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No category fields provided")
+    try:
+        category = update_category_for_tenant(tenant, category_id, update_data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except NoResultFound:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+    category_payload = next((item for item in list_categories_for_tenant(tenant) if item["id"] == category.id), None)
+    if not category_payload:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Category updated but could not be loaded")
+    return category_payload
+
+
+@app.delete("/t/{slug}/categories/{category_id}")
+def delete_category_api(slug: str, category_id: int, tenant=Depends(_admin_tenant_dep)):
+    ok, reason = delete_category_for_tenant(tenant, category_id)
+    if reason == "not_found":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Category not found")
+    if reason == "has_items":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category contains menu items")
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Category could not be deleted")
+    return {"ok": True}
 
 
 @app.post("/t/{slug}/api/admin/upload")
