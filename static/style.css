@@ -1525,7 +1525,7 @@ body.public-menu-page .cart-pane {
 
 body.public-menu-page .cart-body {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 120px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -1535,6 +1535,8 @@ body.public-menu-page .cart-pane .form {
   display: grid;
   gap: 10px;
   flex: 0 0 auto;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 body.public-menu-page .mobile-cart-toggle {
