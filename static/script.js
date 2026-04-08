@@ -2,7 +2,9 @@
   const menuEl = document.getElementById("menu");
   const cartList = document.getElementById("cart-list");
   const cartEmpty = document.getElementById("cart-empty");
+  const cartCount = document.getElementById("cart-count");
   const cartTotal = document.getElementById("cart-total");
+  const cartToast = document.getElementById("cart-toast");
   const clearBtn = document.getElementById("clear-cart");
   const orderForm = document.getElementById("order-form");
   const submitBtn = document.getElementById("submit-order");
@@ -27,6 +29,7 @@
   let promotions = [];
   let discountPercent = 0;
   let tenantPlan = "basic";
+  let toastTimer = 0;
 
   function extractSlug() {
     const slug = window.location.pathname.split("/")[2] || "";
@@ -75,19 +78,88 @@
     return Math.round((Number(price || 0) * (100 - discountPercent)) / 100);
   }
 
+  function setStatus(message, type) {
+    statusEl.textContent = message || "";
+    statusEl.classList.remove("is-success", "is-error");
+    if (type) {
+      statusEl.classList.add(type);
+    }
+  }
+
+  function setSubmitState(isLoading) {
+    submitBtn.disabled = isLoading;
+    submitBtn.classList.toggle("is-loading", isLoading);
+    submitBtn.textContent = isLoading ? "Yuborilmoqda..." : "Yuborish";
+  }
+
+  function showCartToast(message) {
+    if (!cartToast) {
+      return;
+    }
+    cartToast.textContent = message;
+    cartToast.classList.add("is-visible");
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () {
+      cartToast.classList.remove("is-visible");
+    }, 1800);
+  }
+
+  function animateAddButton(button) {
+    if (!button) {
+      return;
+    }
+    button.classList.add("is-added");
+    window.setTimeout(function () {
+      button.classList.remove("is-added");
+    }, 320);
+  }
+
+  function renderMenuSkeleton(count) {
+    menuEl.innerHTML = "";
+    for (let i = 0; i < count; i += 1) {
+      const card = document.createElement("div");
+      card.className = "menu-card menu-card-skeleton";
+
+      const image = document.createElement("div");
+      image.className = "menu-item-image";
+      card.appendChild(image);
+
+      const body = document.createElement("div");
+      body.className = "menu-card-body";
+
+      const chip = document.createElement("div");
+      chip.className = "skeleton-chip";
+      body.appendChild(chip);
+
+      const title = document.createElement("div");
+      title.className = "skeleton-line title";
+      body.appendChild(title);
+
+      const line = document.createElement("div");
+      line.className = "skeleton-line body";
+      body.appendChild(line);
+
+      const shortLine = document.createElement("div");
+      shortLine.className = "skeleton-line body short";
+      body.appendChild(shortLine);
+
+      card.appendChild(body);
+      menuEl.appendChild(card);
+    }
+  }
+
   function clearTenantState() {
     promotions = [];
     discountPercent = 0;
     tenantPlan = "basic";
     cart.clear();
-    cartList.innerHTML = "";
-    cartEmpty.style.display = "block";
-    cartTotal.textContent = "";
     menuEl.innerHTML = "";
-    statusEl.textContent = "";
+    setStatus("");
+    setSubmitState(false);
     if (orderForm) {
       orderForm.reset();
     }
+    renderCart();
   }
 
   function enforceSlugChangeReload() {
@@ -98,10 +170,12 @@
     }
   }
 
-  function addToCart(item) {
+  function addToCart(item, triggerButton) {
     const current = cart.get(item.id) || { item, qty: 0 };
     current.qty += 1;
     cart.set(item.id, current);
+    animateAddButton(triggerButton);
+    showCartToast(`${item.name || "Taom"} savatga qo'shildi`);
     renderCart();
   }
 
@@ -124,12 +198,22 @@
     renderCart();
   }
 
+  function removeFromCart(id) {
+    cart.delete(id);
+    renderCart();
+  }
+
   function renderCart() {
     cartList.innerHTML = "";
     const items = Array.from(cart.values());
+    const totalQty = items.reduce((sum, entry) => sum + entry.qty, 0);
+    if (cartCount) {
+      cartCount.textContent = `${totalQty} ta mahsulot`;
+    }
+    clearBtn.disabled = !items.length;
     if (!items.length) {
       cartEmpty.style.display = "block";
-      cartTotal.textContent = "";
+      cartTotal.textContent = formatPrice(0);
       return;
     }
     cartEmpty.style.display = "none";
@@ -139,23 +223,94 @@
       li.className = "cart-item";
       const lineTotal = effectivePrice(item.price) * qty;
       total += lineTotal;
-      const left = document.createElement("span");
-      safeText(left, `${item.name} x${qty}`);
-      const right = document.createElement("span");
-      safeText(right, formatPrice(lineTotal));
-      li.appendChild(left);
-      li.appendChild(right);
-      li.addEventListener("click", function () {
+
+      const main = document.createElement("div");
+      main.className = "cart-item-main";
+
+      const info = document.createElement("div");
+      const name = document.createElement("p");
+      name.className = "cart-item-name";
+      safeText(name, item.name);
+      info.appendChild(name);
+
+      const sub = document.createElement("p");
+      sub.className = "cart-item-sub";
+      safeText(sub, `${formatPrice(effectivePrice(item.price))} x ${qty}`);
+      info.appendChild(sub);
+
+      const price = document.createElement("span");
+      price.className = "cart-item-price";
+      safeText(price, formatPrice(lineTotal));
+
+      main.appendChild(info);
+      main.appendChild(price);
+      li.appendChild(main);
+
+      const actions = document.createElement("div");
+      actions.className = "cart-item-actions";
+
+      const qtyControl = document.createElement("div");
+      qtyControl.className = "cart-qty";
+
+      const minusBtn = document.createElement("button");
+      minusBtn.type = "button";
+      minusBtn.className = "cart-qty-btn";
+      minusBtn.setAttribute("aria-label", `${item.name} sonini kamaytirish`);
+      safeText(minusBtn, "-");
+      minusBtn.addEventListener("click", function () {
         updateQty(item.id, -1);
       });
+
+      const qtyValue = document.createElement("span");
+      qtyValue.className = "cart-qty-value";
+      safeText(qtyValue, String(qty));
+
+      const plusBtn = document.createElement("button");
+      plusBtn.type = "button";
+      plusBtn.className = "cart-qty-btn";
+      plusBtn.setAttribute("aria-label", `${item.name} sonini oshirish`);
+      safeText(plusBtn, "+");
+      plusBtn.addEventListener("click", function () {
+        updateQty(item.id, 1);
+      });
+
+      qtyControl.appendChild(minusBtn);
+      qtyControl.appendChild(qtyValue);
+      qtyControl.appendChild(plusBtn);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "cart-remove-btn";
+      safeText(removeBtn, "Olib tashlash");
+      removeBtn.addEventListener("click", function () {
+        removeFromCart(item.id);
+      });
+
+      actions.appendChild(qtyControl);
+      actions.appendChild(removeBtn);
+      li.appendChild(actions);
       cartList.appendChild(li);
     });
-    cartTotal.textContent = "Jami: " + formatPrice(total);
+    cartTotal.textContent = formatPrice(total);
   }
 
   function renderMenu(categories) {
     menuEl.innerHTML = "";
     categories.forEach((cat) => {
+      if (cat.title) {
+        const title = document.createElement("h3");
+        title.className = "menu-section-title";
+        safeText(title, cat.title);
+        menuEl.appendChild(title);
+      }
+
+      if (cat.description) {
+        const subtitle = document.createElement("p");
+        subtitle.className = "menu-section-subtitle";
+        safeText(subtitle, cat.description);
+        menuEl.appendChild(subtitle);
+      }
+
       (cat.items || []).forEach((item) => {
         const card = document.createElement("div");
         card.className = "menu-card";
@@ -173,14 +328,14 @@
         if (itemPromo) {
           const badge = document.createElement("div");
           badge.className = "badge-promo";
-          safeText(badge, "Item of the day");
+          safeText(badge, "Kun tavsiyasi");
           card.appendChild(badge);
         }
 
         if (discountPercent) {
           const badge = document.createElement("div");
           badge.className = "badge-promo-alt";
-          safeText(badge, `Happy hours -${discountPercent}%`);
+          safeText(badge, `Aksiya -${discountPercent}%`);
           card.appendChild(badge);
         }
 
@@ -192,6 +347,17 @@
           img.src = imageUrl;
           img.alt = item.name || "";
           img.loading = "lazy";
+          img.className = "menu-image-loading";
+          img.addEventListener("load", function () {
+            img.classList.remove("menu-image-loading");
+          });
+          img.addEventListener("error", function () {
+            imageWrap.innerHTML = "";
+            const fallback = document.createElement("div");
+            fallback.className = "img-placeholder";
+            safeText(fallback, item.name || "");
+            imageWrap.appendChild(fallback);
+          });
           imageWrap.appendChild(img);
         } else {
           const img = document.createElement("div");
@@ -201,13 +367,17 @@
         }
         card.appendChild(imageWrap);
 
+        const body = document.createElement("div");
+        body.className = "menu-card-body";
+
         const title = document.createElement("h4");
         safeText(title, item.name);
-        card.appendChild(title);
+        body.appendChild(title);
 
         const desc = document.createElement("p");
         safeText(desc, item.description || "");
-        card.appendChild(desc);
+        body.appendChild(desc);
+        card.appendChild(body);
 
         const priceRow = document.createElement("div");
         priceRow.className = "price-row";
@@ -217,15 +387,15 @@
         if (discountPercent) {
           const note = document.createElement("div");
           note.className = "promo-note";
-          safeText(note, `Old: ${formatPrice(item.price)}`);
+          safeText(note, `Avval: ${formatPrice(item.price)}`);
           price.appendChild(note);
         }
         const btn = document.createElement("button");
         btn.className = "add-btn";
         btn.type = "button";
-        safeText(btn, "+");
+        safeText(btn, "Qo'shish");
         btn.addEventListener("click", function () {
-          addToCart(item);
+          addToCart(item, btn);
         });
         priceRow.appendChild(price);
         priceRow.appendChild(btn);
@@ -318,6 +488,7 @@
   }
 
   async function loadMenu() {
+    renderMenuSkeleton(6);
     const res = await fetch(tenantPath("/menu"), { credentials: "same-origin" });
     if (!res.ok) {
       throw new Error("Menu yuklab bo'lmadi");
@@ -328,12 +499,12 @@
 
   async function submitOrder(evt) {
     evt.preventDefault();
-    statusEl.textContent = "";
+    setStatus("");
     if (!cart.size) {
-      statusEl.textContent = "Savat bo'sh. Avval menyudan qo'shing.";
+      setStatus("Savat bo'sh. Avval menyudan qo'shing.", "is-error");
       return;
     }
-    submitBtn.disabled = true;
+    setSubmitState(true);
     try {
       const form = new FormData(orderForm);
       const payload = {
@@ -356,13 +527,14 @@
         throw new Error("Yuborishda xatolik");
       }
       const data = await res.json();
-      statusEl.textContent = `Buyurtma qabul qilindi: #${data.order_id}`;
+      setStatus(`Buyurtma qabul qilindi: #${data.order_id}`, "is-success");
+      showCartToast("Buyurtmangiz muvaffaqiyatli yuborildi");
       clearCart();
       orderForm.reset();
     } catch (err) {
-      statusEl.textContent = (err && err.message) || "Xatolik";
+      setStatus((err && err.message) || "Xatolik", "is-error");
     } finally {
-      submitBtn.disabled = false;
+      setSubmitState(false);
     }
   }
 
@@ -370,17 +542,18 @@
     clearTenantState();
     activeSlug = extractSlug();
     if (!activeSlug) {
-      statusEl.textContent = tenantRequiredError;
+      setStatus(tenantRequiredError, "is-error");
       menuEl.innerHTML = `<p class="muted">${tenantRequiredError}</p>`;
       return;
     }
+    renderMenuSkeleton(6);
     try {
       await loadTenant();
       await loadPromotions();
       await loadMenu();
     } catch (err) {
       const message = (err && err.message) || "Xatolik";
-      statusEl.textContent = message;
+      setStatus(message, "is-error");
       menuEl.innerHTML = `<p class="muted">${message}</p>`;
     }
   }
@@ -388,7 +561,7 @@
   clearBtn.addEventListener("click", clearCart);
   orderForm.addEventListener("submit", submitOrder);
   heroCta.addEventListener("click", function () {
-    document.getElementById("menu").scrollIntoView({ behavior: "auto" });
+    document.getElementById("menu").scrollIntoView({ behavior: "smooth", block: "start" });
   });
   window.addEventListener("popstate", enforceSlugChangeReload);
   window.setInterval(enforceSlugChangeReload, 1000);

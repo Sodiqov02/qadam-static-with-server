@@ -13,7 +13,7 @@
         <p class="pill">Issiq &amp; mazali</p>
         <h1>Qadam menyusi</h1>
         <p class="promo-copy">
-          Tez yetkazib berish, bir xil menyu vaqti‑soati bilan.
+          Tez yetkazib berish va qulay buyurtma jarayoni bir sahifada.
         </p>
         <div class="promo-qr">
           <div class="qr-placeholder">
@@ -33,10 +33,10 @@
           <h2>Menyu</h2>
         </div>
         <div class="lang-switch">
-          <a class="ghost-btn" id="orders-link" href="/my-orders">My Orders</a>
-          <a class="ghost-btn" id="admin-link" href="/admin">Admin</a>
-          <button class="ghost-btn">Uz</button>
-          <button class="ghost-btn ghost-active">Ru</button>
+          <a class="ghost-btn" id="orders-link" href="/my-orders">Buyurtmalarim</a>
+          <a class="ghost-btn" id="admin-link" href="/admin">Boshqaruv</a>
+          <button class="ghost-btn ghost-active">Uz</button>
+          <button class="ghost-btn">Ru</button>
           <button class="ghost-btn">En</button>
         </div>
       </header>
@@ -48,7 +48,7 @@
           <p class="hero-eyebrow">Restoran vitrinasi</p>
           <h3 id="hero-title">Qadam</h3>
           <p id="hero-desc" class="hero-desc">Mazali taomlar va tez yetkazib berish.</p>
-          <button class="ghost-btn hero-btn" id="hero-cta" type="button">Смотреть меню</button>
+          <button class="ghost-btn hero-btn" id="hero-cta" type="button">Menyuni ko'rish</button>
         </div>
       </section>
 
@@ -61,14 +61,18 @@
         <div>
           <p class="section-title">Savat</p>
           <small class="muted">Buyurtmani shu yerda yakunlang</small>
+          <small id="cart-count" class="cart-count muted">0 ta mahsulot</small>
         </div>
         <button id="clear-cart" class="ghost-btn" type="button">Tozalash</button>
       </div>
       <div class="cart-body">
-        <div id="cart-empty" class="muted">Hozircha bo'sh.</div>
+        <div id="cart-empty" class="muted">Savat hozircha bo'sh. Yoqtirgan taomingizni qo'shing.</div>
         <ul id="cart-list" class="cart-list"></ul>
       </div>
-      <p id="cart-total" class="total-line"></p>
+      <div class="cart-summary">
+        <p class="muted cart-summary-label">Umumiy summa</p>
+        <p id="cart-total" class="total-line"></p>
+      </div>
       <form id="order-form" class="form">
         <div class="grid-two">
           <div class="field">
@@ -93,6 +97,7 @@
       </form>
     </aside>
   </div>
+  <div id="cart-toast" class="cart-toast" aria-live="polite" aria-atomic="true"></div>
   <script src="/static/script.js" defer></script>
 </body>
 </html>
