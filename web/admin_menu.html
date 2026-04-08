@@ -217,7 +217,7 @@
       const response = await fetch("/admin/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify({ token: adminToken, slug: tenantSlug }),
       });
       if (!response.ok) {
@@ -289,7 +289,7 @@
       const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify({ title }),
       });
       if (response.status === 401 || response.status === 403) {
@@ -306,7 +306,7 @@
       const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify(payload),
       });
       if (response.status === 401 || response.status === 403) {
@@ -322,7 +322,7 @@
     async function apiDeleteCategory(categoryId) {
       const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
         method: "DELETE",
-        credentials: "same-origin",
+        credentials: "include",
       });
       if (response.status === 401 || response.status === 403) {
         showAccessDenied();
@@ -552,7 +552,7 @@
             setGlobalStatus("");
             const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
               method: "DELETE",
-              credentials: "same-origin",
+              credentials: "include",
             });
             if (response.status === 401 || response.status === 403) {
               showAccessDenied();
@@ -590,7 +590,7 @@
       }
 
       const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
-        credentials: "same-origin",
+        credentials: "include",
       });
       if (response.status === 401 || response.status === 403) {
         showAccessDenied();
@@ -629,7 +629,7 @@
 
       const response = await fetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
         method: "POST",
-        credentials: "same-origin",
+        credentials: "include",
         body: formData,
       });
       if (response.status === 401 || response.status === 403) {
@@ -692,7 +692,7 @@
       const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify(payload),
       });
       if (response.status === 401 || response.status === 403) {

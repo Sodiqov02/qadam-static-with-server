@@ -225,18 +225,21 @@ def _admin_tenant_lookup(slug: str) -> Tenant:
 
 
 def _set_admin_session_cookie(response: Response, session_token: str) -> None:
+    api_base_url = str(getattr(settings, "API_BASE_URL", "") or "").strip().lower()
+    secure_cookie = api_base_url.startswith("https://") or bool(os.getenv("RAILWAY_ENVIRONMENT"))
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
         value=session_token,
         max_age=ADMIN_SESSION_MAX_AGE,
         httponly=True,
-        samesite="lax",
+        samesite="Lax",
+        secure=secure_cookie,
         path="/",
     )
 
 
 def _clear_admin_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=ADMIN_SESSION_COOKIE, path="/", samesite="lax")
+    response.delete_cookie(key=ADMIN_SESSION_COOKIE, path="/", samesite="Lax")
 
 
 def _assert_admin_access(admin: AdminAuthContext, tenant: Tenant) -> None:

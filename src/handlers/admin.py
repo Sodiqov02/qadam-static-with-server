@@ -1,6 +1,7 @@
 from functools import wraps
 from aiogram import Router, types
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramAPIError
 
 from src.config import settings
 from src.db_models import Tenant
@@ -10,6 +11,7 @@ from src.store import create_admin_login_token_for_tenant, update_order_status
 
 def create_admin_router(tenant: Tenant) -> Router:
     router = Router()
+    user_last_message_id: dict[int, int] = {}
 
     def _admin_menu_url(token: str) -> str:
         base_url = (settings.API_BASE_URL or "").rstrip("/")
@@ -32,14 +34,38 @@ def create_admin_router(tenant: Tenant) -> Router:
 
         return wrapper
 
+    async def _delete_last_reply(bot, chat_id: int) -> None:
+        last_message_id = user_last_message_id.get(chat_id)
+        if not bot or not last_message_id:
+            return
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=last_message_id)
+        except TelegramAPIError:
+            return
+
+    async def _safe_delete_command_message(message: types.Message) -> None:
+        try:
+            await message.delete()
+        except TelegramAPIError:
+            return
+
+    async def _answer_admin(message: types.Message, text: str) -> None:
+        if not message.chat:
+            return
+        chat_id = int(message.chat.id)
+        await _delete_last_reply(message.bot, chat_id)
+        sent = await message.answer(text)
+        user_last_message_id[chat_id] = sent.message_id
+        await _safe_delete_command_message(message)
+
     @router.message(Command("approve"))
     @admin_only
     async def approve(message: types.Message):
         if not message.text:
-            return await message.answer("Format: /approve 12")
+            return await _answer_admin(message, "Format: /approve 12")
         parts = message.text.split()
         if len(parts) != 2 or not parts[1].isdigit():
-            return await message.answer("Format: /approve 12")
+            return await _answer_admin(message, "Format: /approve 12")
         oid = int(parts[1])
         ok, order, _, prev, new = update_order_status(
             oid,
@@ -50,16 +76,16 @@ def create_admin_router(tenant: Tenant) -> Router:
         )
         if ok and order and new:
             await notify_order_status_changed(order.id, tenant.id, prev, new)
-        await message.answer("Tasdiqlandi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
+        await _answer_admin(message, "Tasdiqlandi." if ok else "Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("reject"))
     @admin_only
     async def reject(message: types.Message):
         if not message.text:
-            return await message.answer("Format: /reject 12")
+            return await _answer_admin(message, "Format: /reject 12")
         parts = message.text.split()
         if len(parts) != 2 or not parts[1].isdigit():
-            return await message.answer("Format: /reject 12")
+            return await _answer_admin(message, "Format: /reject 12")
         oid = int(parts[1])
         ok, order, _, prev, new = update_order_status(
             oid,
@@ -70,16 +96,16 @@ def create_admin_router(tenant: Tenant) -> Router:
         )
         if ok and order and new:
             await notify_order_status_changed(order.id, tenant.id, prev, new)
-        await message.answer("Rad etildi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
+        await _answer_admin(message, "Rad etildi." if ok else "Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("done"))
     @admin_only
     async def done(message: types.Message):
         if not message.text:
-            return await message.answer("Format: /done 12")
+            return await _answer_admin(message, "Format: /done 12")
         parts = message.text.split()
         if len(parts) != 2 or not parts[1].isdigit():
-            return await message.answer("Format: /done 12")
+            return await _answer_admin(message, "Format: /done 12")
         oid = int(parts[1])
         ok, order, _, prev, new = update_order_status(
             oid,
@@ -90,13 +116,18 @@ def create_admin_router(tenant: Tenant) -> Router:
         )
         if ok and order and new:
             await notify_order_status_changed(order.id, tenant.id, prev, new)
-        await message.answer("Yakunlandi.") if ok else await message.answer("Buyurtma topilmadi yoki status noto'g'ri.")
+        await _answer_admin(message, "Yakunlandi." if ok else "Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("admin"))
-    @admin_only
     async def admin_login_link(message: types.Message):
+        user_id = message.from_user.id if message.from_user else None
+        print("ADMIN COMMAND:", user_id)
+        if not message.chat or not tenant.admin_chat_id or int(message.chat.id) != int(tenant.admin_chat_id):
+            await _answer_admin(message, "Access denied")
+            return
         login_token = create_admin_login_token_for_tenant(tenant)
-        await message.answer(
+        await _answer_admin(
+            message,
             "\n".join(
                 [
                     "Admin login link (10 minutes, one-time use):",
