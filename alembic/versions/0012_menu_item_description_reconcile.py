@@ -11,13 +11,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    inspector = sa.inspect(bind)
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
     columns = {column["name"] for column in inspector.get_columns("menu_items")}
-    if "description" in columns:
-        return
-    with op.batch_alter_table("menu_items") as batch_op:
-        batch_op.add_column(sa.Column("description", sa.Text(), nullable=True))
+    if "description" not in columns:
+        op.add_column("menu_items", sa.Column("description", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
