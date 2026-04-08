@@ -1,11 +1,16 @@
 (function () {
   const menuEl = document.getElementById("menu");
+  const menuFilters = document.getElementById("menu-filters");
   const cartList = document.getElementById("cart-list");
   const cartEmpty = document.getElementById("cart-empty");
   const cartCount = document.getElementById("cart-count");
   const cartTotal = document.getElementById("cart-total");
   const cartToast = document.getElementById("cart-toast");
+  const cartPane = document.querySelector(".cart-pane");
   const clearBtn = document.getElementById("clear-cart");
+  const mobileCartToggle = document.getElementById("mobile-cart-toggle");
+  const mobileCartClose = document.getElementById("mobile-cart-close");
+  const mobileCartBackdrop = document.getElementById("mobile-cart-backdrop");
   const orderForm = document.getElementById("order-form");
   const submitBtn = document.getElementById("submit-order");
   const statusEl = document.getElementById("order-status");
@@ -29,6 +34,8 @@
   let promotions = [];
   let discountPercent = 0;
   let tenantPlan = "basic";
+  let menuCategories = [];
+  let activeCategoryId = "all";
   let toastTimer = 0;
 
   function extractSlug() {
@@ -76,6 +83,51 @@
       return Number(price || 0);
     }
     return Math.round((Number(price || 0) * (100 - discountPercent)) / 100);
+  }
+
+  function isMobileViewport() {
+    return window.innerWidth < 768;
+  }
+
+  function setMobileCartOpen(isOpen) {
+    document.body.classList.toggle("mobile-cart-open", Boolean(isOpen) && isMobileViewport());
+  }
+
+  function updateMobileCartToggle(totalQty) {
+    if (mobileCartToggle) {
+      mobileCartToggle.textContent = `Savat (${totalQty} ta)`;
+    }
+  }
+
+  function renderMenuFilters(categories) {
+    if (!menuFilters) {
+      return;
+    }
+    menuFilters.innerHTML = "";
+
+    const allButton = document.createElement("button");
+    allButton.type = "button";
+    allButton.className = `menu-filter-pill${activeCategoryId === "all" ? " is-active" : ""}`;
+    safeText(allButton, "Barcha");
+    allButton.addEventListener("click", function () {
+      activeCategoryId = "all";
+      renderMenuFilters(menuCategories);
+      renderMenu(menuCategories);
+    });
+    menuFilters.appendChild(allButton);
+
+    categories.forEach((category) => {
+      const filterBtn = document.createElement("button");
+      filterBtn.type = "button";
+      filterBtn.className = `menu-filter-pill${activeCategoryId === String(category.id) ? " is-active" : ""}`;
+      safeText(filterBtn, category.title || "");
+      filterBtn.addEventListener("click", function () {
+        activeCategoryId = String(category.id);
+        renderMenuFilters(menuCategories);
+        renderMenu(menuCategories);
+      });
+      menuFilters.appendChild(filterBtn);
+    });
   }
 
   function setStatus(message, type) {
@@ -152,10 +204,16 @@
     promotions = [];
     discountPercent = 0;
     tenantPlan = "basic";
+    menuCategories = [];
+    activeCategoryId = "all";
     cart.clear();
     menuEl.innerHTML = "";
+    if (menuFilters) {
+      menuFilters.innerHTML = "";
+    }
     setStatus("");
     setSubmitState(false);
+    setMobileCartOpen(false);
     if (orderForm) {
       orderForm.reset();
     }
@@ -210,6 +268,7 @@
     if (cartCount) {
       cartCount.textContent = `${totalQty} ta mahsulot`;
     }
+    updateMobileCartToggle(totalQty);
     clearBtn.disabled = !items.length;
     if (!items.length) {
       cartEmpty.style.display = "block";
@@ -296,7 +355,14 @@
 
   function renderMenu(categories) {
     menuEl.innerHTML = "";
-    categories.forEach((cat) => {
+    const visibleCategories = categories.filter((cat) => {
+      if (activeCategoryId === "all") {
+        return true;
+      }
+      return String(cat.id) === activeCategoryId;
+    });
+
+    visibleCategories.forEach((cat) => {
       if (cat.title) {
         const title = document.createElement("h3");
         title.className = "menu-section-title";
@@ -373,10 +439,6 @@
         const title = document.createElement("h4");
         safeText(title, item.name);
         body.appendChild(title);
-
-        const desc = document.createElement("p");
-        safeText(desc, item.description || "");
-        body.appendChild(desc);
         card.appendChild(body);
 
         const priceRow = document.createElement("div");
@@ -400,9 +462,20 @@
         priceRow.appendChild(price);
         priceRow.appendChild(btn);
         card.appendChild(priceRow);
+
+        if (item.description) {
+          const desc = document.createElement("p");
+          desc.className = "menu-card-desc";
+          safeText(desc, item.description || "");
+          card.appendChild(desc);
+        }
         menuEl.appendChild(card);
       });
     });
+
+    if (!visibleCategories.length) {
+      menuEl.innerHTML = `<p class="muted">Bu bo'limda hozircha taom yo'q.</p>`;
+    }
   }
 
   async function loadTenant() {
@@ -494,7 +567,12 @@
       throw new Error("Menu yuklab bo'lmadi");
     }
     const data = await res.json();
-    renderMenu(data.categories || []);
+    menuCategories = data.categories || [];
+    if (activeCategoryId !== "all" && !menuCategories.some((cat) => String(cat.id) === activeCategoryId)) {
+      activeCategoryId = "all";
+    }
+    renderMenuFilters(menuCategories);
+    renderMenu(menuCategories);
   }
 
   async function submitOrder(evt) {
@@ -529,6 +607,7 @@
       const data = await res.json();
       setStatus(`Buyurtma qabul qilindi: #${data.order_id}`, "is-success");
       showCartToast("Buyurtmangiz muvaffaqiyatli yuborildi");
+      setMobileCartOpen(false);
       clearCart();
       orderForm.reset();
     } catch (err) {
@@ -560,8 +639,28 @@
 
   clearBtn.addEventListener("click", clearCart);
   orderForm.addEventListener("submit", submitOrder);
+  if (mobileCartToggle) {
+    mobileCartToggle.addEventListener("click", function () {
+      setMobileCartOpen(true);
+    });
+  }
+  if (mobileCartClose) {
+    mobileCartClose.addEventListener("click", function () {
+      setMobileCartOpen(false);
+    });
+  }
+  if (mobileCartBackdrop) {
+    mobileCartBackdrop.addEventListener("click", function () {
+      setMobileCartOpen(false);
+    });
+  }
   heroCta.addEventListener("click", function () {
     document.getElementById("menu").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  window.addEventListener("resize", function () {
+    if (!isMobileViewport()) {
+      setMobileCartOpen(false);
+    }
   });
   window.addEventListener("popstate", enforceSlugChangeReload);
   window.setInterval(enforceSlugChangeReload, 1000);

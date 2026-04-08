@@ -145,6 +145,7 @@ class TenantAdminUpdate(BaseModel):
 class MenuItemAdminUpdate(BaseModel):
     name: str | None = None
     price: int | None = None
+    description: str | None = None
     image_url: str | None = None
     is_available: bool | None = None
 

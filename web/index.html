@@ -53,6 +53,7 @@
       </section>
 
       <section>
+        <div id="menu-filters" class="menu-filters"></div>
         <div id="menu" class="menu-grid"></div>
       </section>
     </main>
@@ -63,7 +64,10 @@
           <small class="muted">Buyurtmani shu yerda yakunlang</small>
           <small id="cart-count" class="cart-count muted">0 ta mahsulot</small>
         </div>
-        <button id="clear-cart" class="ghost-btn" type="button">Tozalash</button>
+        <div class="cart-head-actions">
+          <button id="clear-cart" class="ghost-btn" type="button">Tozalash</button>
+          <button id="mobile-cart-close" class="ghost-btn mobile-cart-close" type="button">Yopish</button>
+        </div>
       </div>
       <div class="cart-body">
         <div id="cart-empty" class="muted">Savat hozircha bo'sh. Yoqtirgan taomingizni qo'shing.</div>
@@ -97,6 +101,8 @@
       </form>
     </aside>
   </div>
+  <button id="mobile-cart-toggle" class="mobile-cart-toggle" type="button">Savat (0 ta)</button>
+  <div id="mobile-cart-backdrop" class="mobile-cart-backdrop"></div>
   <div id="cart-toast" class="cart-toast" aria-live="polite" aria-atomic="true"></div>
   <script src="/static/script.js" defer></script>
 </body>
