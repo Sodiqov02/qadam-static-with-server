@@ -9,6 +9,7 @@
   const cartPane = document.querySelector(".cart-pane");
   const clearBtn = document.getElementById("clear-cart");
   const mobileCartToggle = document.getElementById("mobile-cart-toggle");
+  const headerCartToggle = document.getElementById("header-cart-toggle");
   const mobileCartClose = document.getElementById("mobile-cart-close");
   const mobileCartBackdrop = document.getElementById("mobile-cart-backdrop");
   const orderForm = document.getElementById("order-form");
@@ -20,8 +21,18 @@
   const heroCta = document.getElementById("hero-cta");
   const ordersLink = document.getElementById("orders-link");
   const adminLink = document.getElementById("admin-link");
+  const headerTelegramLink = document.getElementById("header-telegram-link");
   const botLink = document.getElementById("bot-link");
   const botQr = document.getElementById("bot-qr");
+  const botMeta = document.getElementById("bot-meta");
+  const siteTitle = document.getElementById("site-title");
+  const footerTitle = document.getElementById("footer-title");
+  const footerDescription = document.getElementById("footer-description");
+  const footerTelegramLink = document.getElementById("footer-telegram-link");
+  const footerPhone = document.getElementById("footer-phone");
+  const footerAddress = document.getElementById("footer-address");
+  const footerHours = document.getElementById("footer-hours");
+  const cartTriggers = document.querySelectorAll(".cart-trigger");
 
   if (!menuEl || !orderForm || !statusEl) {
     return;
@@ -85,17 +96,20 @@
     return Math.round((Number(price || 0) * (100 - discountPercent)) / 100);
   }
 
-  function isMobileViewport() {
-    return window.innerWidth < 768;
+  function setCartOpen(isOpen) {
+    const open = Boolean(isOpen);
+    document.body.classList.toggle("cart-open", open);
+    if (cartPane) {
+      cartPane.setAttribute("aria-hidden", open ? "false" : "true");
+    }
   }
 
-  function setMobileCartOpen(isOpen) {
-    document.body.classList.toggle("mobile-cart-open", Boolean(isOpen) && isMobileViewport());
-  }
-
-  function updateMobileCartToggle(totalQty) {
+  function updateCartToggles(totalQty) {
     if (mobileCartToggle) {
-      mobileCartToggle.textContent = `Savat (${totalQty} ta)`;
+      mobileCartToggle.textContent = totalQty ? `Savat - ${totalQty} ta` : "Savat";
+    }
+    if (headerCartToggle) {
+      headerCartToggle.textContent = totalQty ? `Savat (${totalQty})` : "Savat";
     }
   }
 
@@ -168,6 +182,8 @@
 
   function renderMenuSkeleton(count) {
     menuEl.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "menu-section-grid is-skeleton-grid";
     for (let i = 0; i < count; i += 1) {
       const card = document.createElement("div");
       card.className = "menu-card menu-card-skeleton";
@@ -196,8 +212,9 @@
       body.appendChild(shortLine);
 
       card.appendChild(body);
-      menuEl.appendChild(card);
+      grid.appendChild(card);
     }
+    menuEl.appendChild(grid);
   }
 
   function clearTenantState() {
@@ -213,9 +230,30 @@
     }
     setStatus("");
     setSubmitState(false);
-    setMobileCartOpen(false);
+    setCartOpen(false);
     if (orderForm) {
       orderForm.reset();
+    }
+    if (siteTitle) {
+      siteTitle.textContent = "Qadam menyusi";
+    }
+    if (footerTitle) {
+      footerTitle.textContent = "Qadam";
+    }
+    if (footerDescription) {
+      footerDescription.textContent = "Menyu, buyurtma va yetkazib berish bitta sahifada.";
+    }
+    if (headerTelegramLink) {
+      headerTelegramLink.style.display = "";
+      headerTelegramLink.href = "#";
+    }
+    if (botLink) {
+      botLink.textContent = "@bot";
+      botLink.href = "#";
+    }
+    if (footerTelegramLink) {
+      footerTelegramLink.textContent = "Mavjud emas";
+      footerTelegramLink.href = "#";
     }
     renderCart();
   }
@@ -268,7 +306,7 @@
     if (cartCount) {
       cartCount.textContent = `${totalQty} ta mahsulot`;
     }
-    updateMobileCartToggle(totalQty);
+    updateCartToggles(totalQty);
     clearBtn.disabled = !items.length;
     if (!items.length) {
       cartEmpty.style.display = "block";
@@ -355,6 +393,7 @@
 
   function renderMenu(categories) {
     menuEl.innerHTML = "";
+    let renderedSections = 0;
     const visibleCategories = categories.filter((cat) => {
       if (activeCategoryId === "all") {
         return true;
@@ -363,21 +402,39 @@
     });
 
     visibleCategories.forEach((cat) => {
-      if (cat.title) {
-        const title = document.createElement("h3");
-        title.className = "menu-section-title";
-        safeText(title, cat.title);
-        menuEl.appendChild(title);
+      const items = Array.isArray(cat.items) ? cat.items : [];
+      if (!items.length && activeCategoryId === "all") {
+        return;
       }
 
-      if (cat.description) {
-        const subtitle = document.createElement("p");
-        subtitle.className = "menu-section-subtitle";
-        safeText(subtitle, cat.description);
-        menuEl.appendChild(subtitle);
+      const section = document.createElement("section");
+      section.className = "menu-section";
+
+      if (cat.title || cat.description) {
+        const head = document.createElement("div");
+        head.className = "menu-section-head";
+
+        if (cat.title) {
+          const title = document.createElement("h3");
+          title.className = "menu-section-title";
+          safeText(title, cat.title);
+          head.appendChild(title);
+        }
+
+        if (cat.description) {
+          const subtitle = document.createElement("p");
+          subtitle.className = "menu-section-subtitle";
+          safeText(subtitle, cat.description);
+          head.appendChild(subtitle);
+        }
+
+        section.appendChild(head);
       }
 
-      (cat.items || []).forEach((item) => {
+      const sectionGrid = document.createElement("div");
+      sectionGrid.className = "menu-section-grid";
+
+      items.forEach((item) => {
         const card = document.createElement("div");
         card.className = "menu-card";
 
@@ -439,6 +496,14 @@
         const title = document.createElement("h4");
         safeText(title, item.name);
         body.appendChild(title);
+
+        if (item.description) {
+          const desc = document.createElement("p");
+          desc.className = "menu-card-desc";
+          safeText(desc, item.description || "");
+          body.appendChild(desc);
+        }
+
         card.appendChild(body);
 
         const priceRow = document.createElement("div");
@@ -462,19 +527,24 @@
         priceRow.appendChild(price);
         priceRow.appendChild(btn);
         card.appendChild(priceRow);
-
-        if (item.description) {
-          const desc = document.createElement("p");
-          desc.className = "menu-card-desc";
-          safeText(desc, item.description || "");
-          card.appendChild(desc);
-        }
-        menuEl.appendChild(card);
+        sectionGrid.appendChild(card);
       });
+
+      if (items.length) {
+        section.appendChild(sectionGrid);
+      } else {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        safeText(empty, "Bu bo'limda hozircha taom yo'q.");
+        section.appendChild(empty);
+      }
+
+      menuEl.appendChild(section);
+      renderedSections += 1;
     });
 
-    if (!visibleCategories.length) {
-      menuEl.innerHTML = `<p class="muted">Bu bo'limda hozircha taom yo'q.</p>`;
+    if (!renderedSections) {
+      menuEl.innerHTML = `<div class="empty-state compact">Bu bo'limda hozircha taom yo'q.</div>`;
     }
   }
 
@@ -487,9 +557,18 @@
     tenantPlan = data.plan || "basic";
     if (data.name) {
       heroTitle.textContent = data.name;
+      if (siteTitle) {
+        siteTitle.textContent = data.name;
+      }
+      if (footerTitle) {
+        footerTitle.textContent = data.name;
+      }
     }
     if (data.description) {
       heroDesc.textContent = data.description;
+      if (footerDescription) {
+        footerDescription.textContent = data.description;
+      }
     }
     if (isRenderableImageUrl(data.hero_image)) {
       heroMedia.style.backgroundImage = `url("${data.hero_image}")`;
@@ -524,20 +603,56 @@
     const botUsername = (data.bot_username || "").replace("@", "");
     if (data.bot_enabled && botUsername) {
       const link = `https://t.me/${botUsername}`;
+      if (headerTelegramLink) {
+        headerTelegramLink.href = link;
+        headerTelegramLink.textContent = "Telegram";
+        headerTelegramLink.style.display = "";
+      }
       if (botLink) {
         botLink.textContent = `@${botUsername}`;
         botLink.href = link;
       }
+      if (footerTelegramLink) {
+        footerTelegramLink.textContent = `@${botUsername}`;
+        footerTelegramLink.href = link;
+      }
       if (botQr) {
         botQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(link)}`;
       }
+      if (botMeta) {
+        botMeta.textContent = "Tezkor buyurtma va aloqa uchun Telegram botga o'ting";
+      }
+      if (footerPhone) {
+        footerPhone.textContent = "Aloqa Telegram orqali";
+      }
     } else {
+      if (headerTelegramLink) {
+        headerTelegramLink.style.display = "none";
+      }
       if (botLink) {
         botLink.textContent = "Bot mavjud emas";
+        botLink.removeAttribute("href");
+      }
+      if (footerTelegramLink) {
+        footerTelegramLink.textContent = "Mavjud emas";
+        footerTelegramLink.removeAttribute("href");
       }
       if (botQr) {
         botQr.removeAttribute("src");
       }
+      if (botMeta) {
+        botMeta.textContent = "Telegram bot ulanmagan";
+      }
+      if (footerPhone) {
+        footerPhone.textContent = "Telefon raqami mavjud emas";
+      }
+    }
+
+    if (footerAddress) {
+      footerAddress.textContent = "Yetkazib berish manzili buyurtma vaqtida aniqlanadi";
+    }
+    if (footerHours) {
+      footerHours.textContent = "Har kuni 10:00 - 22:00";
     }
   }
 
@@ -607,7 +722,7 @@
       const data = await res.json();
       setStatus(`Buyurtma qabul qilindi: #${data.order_id}`, "is-success");
       showCartToast("Buyurtmangiz muvaffaqiyatli yuborildi");
-      setMobileCartOpen(false);
+      setCartOpen(false);
       clearCart();
       orderForm.reset();
     } catch (err) {
@@ -639,27 +754,30 @@
 
   clearBtn.addEventListener("click", clearCart);
   orderForm.addEventListener("submit", submitOrder);
-  if (mobileCartToggle) {
-    mobileCartToggle.addEventListener("click", function () {
-      setMobileCartOpen(true);
+  cartTriggers.forEach((trigger) => {
+    trigger.addEventListener("click", function () {
+      setCartOpen(true);
     });
-  }
+  });
   if (mobileCartClose) {
     mobileCartClose.addEventListener("click", function () {
-      setMobileCartOpen(false);
+      setCartOpen(false);
     });
   }
   if (mobileCartBackdrop) {
     mobileCartBackdrop.addEventListener("click", function () {
-      setMobileCartOpen(false);
+      setCartOpen(false);
     });
   }
   heroCta.addEventListener("click", function () {
-    document.getElementById("menu").scrollIntoView({ behavior: "smooth", block: "start" });
+    const discovery = document.querySelector(".menu-discovery");
+    if (discovery) {
+      discovery.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   });
-  window.addEventListener("resize", function () {
-    if (!isMobileViewport()) {
-      setMobileCartOpen(false);
+  window.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      setCartOpen(false);
     }
   });
   window.addEventListener("popstate", enforceSlugChangeReload);

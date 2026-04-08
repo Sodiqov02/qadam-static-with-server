@@ -6,58 +6,104 @@
   <title>Qadam Delivery</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
-<body>
+<body class="public-menu-page">
   <div class="page">
-    <aside class="promo-card">
-      <div class="promo-plate">
-        <p class="pill">Issiq &amp; mazali</p>
-        <h1>Qadam menyusi</h1>
-        <p class="promo-copy">
-          Tez yetkazib berish va qulay buyurtma jarayoni bir sahifada.
-        </p>
-        <div class="promo-qr">
-          <div class="qr-placeholder">
-            <img id="bot-qr" alt="Telegram QR" />
-          </div>
-          <div class="promo-meta">
-            <span>Bot orqali buyurtma</span>
-            <a id="bot-link" href="#" target="_blank" rel="noopener">@bot</a>
-          </div>
-        </div>
+    <header class="site-header">
+      <div class="brand-block">
+        <p class="eyebrow">Qadam storefront</p>
+        <h1 id="site-title">Qadam menyusi</h1>
       </div>
-    </aside>
-    <main class="content">
-      <header class="content-head">
-        <div>
-          <p class="eyebrow">Bugungi tanlov</p>
-          <h2>Menyu</h2>
-        </div>
-        <div class="lang-switch">
-          <a class="ghost-btn" id="orders-link" href="/my-orders">Buyurtmalarim</a>
-          <a class="ghost-btn" id="admin-link" href="/admin">Boshqaruv</a>
-          <button class="ghost-btn ghost-active">Uz</button>
-          <button class="ghost-btn">Ru</button>
-          <button class="ghost-btn">En</button>
-        </div>
-      </header>
+      <div class="site-actions">
+        <a class="ghost-btn" id="orders-link" href="/my-orders">Buyurtmalarim</a>
+        <a class="ghost-btn" id="header-telegram-link" href="#" target="_blank" rel="noopener">Telegram</a>
+        <a class="ghost-btn" id="admin-link" href="/admin">Boshqaruv</a>
+        <button class="ghost-btn cart-trigger" id="header-cart-toggle" type="button">Savat</button>
+      </div>
+    </header>
 
+    <main class="content">
       <section class="hero" id="hero">
         <div class="hero-media" id="hero-media"></div>
         <div class="hero-overlay"></div>
-        <div class="hero-content">
-          <p class="hero-eyebrow">Restoran vitrinasi</p>
-          <h3 id="hero-title">Qadam</h3>
-          <p id="hero-desc" class="hero-desc">Mazali taomlar va tez yetkazib berish.</p>
-          <button class="ghost-btn hero-btn" id="hero-cta" type="button">Menyuni ko'rish</button>
+        <div class="hero-layout">
+          <div class="hero-content">
+            <p class="hero-eyebrow">Restoran vitrinasi</p>
+            <h2 id="hero-title">Qadam</h2>
+            <p id="hero-desc" class="hero-desc">Mazali taomlar va tez yetkazib berish.</p>
+            <div class="hero-actions">
+              <button class="ghost-btn hero-btn" id="hero-cta" type="button">Menyuni ko'rish</button>
+              <button class="ghost-btn hero-secondary cart-trigger" type="button">Savatni ochish</button>
+            </div>
+            <div class="hero-highlights">
+              <span class="hero-chip">Tez buyurtma</span>
+              <span class="hero-chip">Yangi pishiriladi</span>
+              <span class="hero-chip">Yetkazib berish mavjud</span>
+            </div>
+          </div>
+          <aside class="hero-aside">
+            <div class="promo-plate">
+              <p class="pill">Issiq &amp; mazali</p>
+              <h3>Buyurtma bir necha qadamda</h3>
+              <p class="promo-copy">
+                Menyudan tanlang, savatni to'ldiring va buyurtmani shu sahifada yakunlang.
+              </p>
+              <div class="promo-qr">
+                <div class="qr-placeholder">
+                  <img id="bot-qr" alt="Telegram QR" />
+                </div>
+                <div class="promo-meta">
+                  <span>Telegram orqali</span>
+                  <a id="bot-link" href="#" target="_blank" rel="noopener">@bot</a>
+                  <small id="bot-meta">Bot mavjud bo'lsa tezkor buyurtma uchun foydalaning</small>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
       </section>
 
-      <section>
+      <section class="menu-discovery">
+        <div class="menu-toolbar">
+          <div>
+            <p class="eyebrow">Bugungi tanlov</p>
+            <h2>Menyu</h2>
+          </div>
+          <p class="menu-toolbar-copy">Kategoriya bo'yicha tanlang va mahsulotlarni tez qo'shing.</p>
+        </div>
         <div id="menu-filters" class="menu-filters"></div>
-        <div id="menu" class="menu-grid"></div>
       </section>
+      <section id="menu" class="menu-grid"></section>
     </main>
-    <aside class="cart-pane">
+
+    <footer class="site-footer">
+      <div class="footer-brand">
+        <p class="eyebrow">Buyurtma va aloqa</p>
+        <h2 id="footer-title">Qadam</h2>
+        <p id="footer-description" class="footer-copy">Menyu, buyurtma va yetkazib berish bitta sahifada.</p>
+      </div>
+      <div class="footer-grid">
+        <div class="footer-card">
+          <span class="footer-label">Telegram / bot</span>
+          <a id="footer-telegram-link" href="#" target="_blank" rel="noopener">Mavjud emas</a>
+        </div>
+        <div class="footer-card">
+          <span class="footer-label">Telefon</span>
+          <span id="footer-phone">Telefon raqami mavjud emas</span>
+        </div>
+        <div class="footer-card">
+          <span class="footer-label">Manzil</span>
+          <span id="footer-address">Yetkazib berish manzili buyurtma vaqtida aniqlanadi</span>
+        </div>
+        <div class="footer-card">
+          <span class="footer-label">Ish vaqti</span>
+          <span id="footer-hours">Har kuni 10:00 - 22:00</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <div id="mobile-cart-backdrop" class="mobile-cart-backdrop"></div>
+  <aside class="cart-pane" aria-hidden="true">
       <div class="cart-head">
         <div>
           <p class="section-title">Savat</p>
@@ -100,9 +146,7 @@
         <p id="order-status" class="muted status"></p>
       </form>
     </aside>
-  </div>
-  <button id="mobile-cart-toggle" class="mobile-cart-toggle" type="button">Savat (0 ta)</button>
-  <div id="mobile-cart-backdrop" class="mobile-cart-backdrop"></div>
+  <button id="mobile-cart-toggle" class="mobile-cart-toggle cart-trigger" type="button">Savat</button>
   <div id="cart-toast" class="cart-toast" aria-live="polite" aria-atomic="true"></div>
   <script src="/static/script.js" defer></script>
 </body>
