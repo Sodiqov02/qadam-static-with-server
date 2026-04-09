@@ -7,6 +7,7 @@
   const cartTotal = document.getElementById("cart-total");
   const cartToast = document.getElementById("cart-toast");
   const cartPane = document.querySelector(".cart-pane");
+  const cartItems = document.querySelector(".cart-items");
   const clearBtn = document.getElementById("clear-cart");
   const mobileCartToggle = document.getElementById("mobile-cart-toggle");
   const headerCartToggle = document.getElementById("header-cart-toggle");
@@ -807,6 +808,27 @@
       setCartOpen(false);
     }
   });
+
+  if (cartPane && cartItems) {
+    cartPane.addEventListener(
+      "wheel",
+      function (event) {
+        if (!document.body.classList.contains("cart-open")) {
+          return;
+        }
+        if (event.target instanceof Element && event.target.closest("textarea, input, select")) {
+          return;
+        }
+        if (cartItems.scrollHeight <= cartItems.clientHeight) {
+          return;
+        }
+        event.preventDefault();
+        cartItems.scrollTop += event.deltaY;
+      },
+      { passive: false }
+    );
+  }
+
   window.addEventListener("popstate", enforceSlugChangeReload);
   window.setInterval(enforceSlugChangeReload, 1000);
 
