@@ -35,6 +35,7 @@
   const footerAddress = document.getElementById("footer-address");
   const footerHours = document.getElementById("footer-hours");
   const cartTriggers = document.querySelectorAll(".cart-trigger");
+  let lastCartTrigger = null;
 
   if (!menuEl || !orderForm || !statusEl) {
     return;
@@ -103,6 +104,20 @@
     document.body.classList.toggle("cart-open", open);
     if (cartPane) {
       cartPane.setAttribute("aria-hidden", open ? "false" : "true");
+      if (open) {
+        cartPane.removeAttribute("inert");
+      } else {
+        cartPane.setAttribute("inert", "");
+      }
+    }
+    if (open) {
+      window.requestAnimationFrame(function () {
+        if (mobileCartClose) {
+          mobileCartClose.focus({ preventScroll: true });
+        }
+      });
+    } else if (lastCartTrigger && typeof lastCartTrigger.focus === "function") {
+      lastCartTrigger.focus({ preventScroll: true });
     }
   }
 
@@ -767,6 +782,7 @@
   orderForm.addEventListener("submit", submitOrder);
   cartTriggers.forEach((trigger) => {
     trigger.addEventListener("click", function () {
+      lastCartTrigger = trigger;
       setCartOpen(true);
     });
   });
@@ -793,6 +809,10 @@
   });
   window.addEventListener("popstate", enforceSlugChangeReload);
   window.setInterval(enforceSlugChangeReload, 1000);
+
+  if (cartPane) {
+    cartPane.setAttribute("inert", "");
+  }
 
   boot();
 })();

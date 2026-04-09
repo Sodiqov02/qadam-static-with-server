@@ -1577,10 +1577,14 @@ body.public-menu-page .cart-pane {
   padding: 18px;
   border-radius: 28px;
   transform: translateX(calc(100% + 36px));
-  transition: transform 240ms ease;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 240ms ease, opacity 180ms ease, visibility 0s linear 240ms;
   z-index: 45;
   overflow: hidden;
   height: calc(100vh - 48px);
+  will-change: transform, opacity;
 }
 
 body.public-menu-page .cart-items {
@@ -1627,6 +1631,7 @@ body.public-menu-page .mobile-cart-toggle {
   background: linear-gradient(135deg, rgba(16, 185, 129, 0.98), rgba(5, 150, 105, 0.98));
   color: #ffffff;
   transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  touch-action: manipulation;
 }
 
 body.public-menu-page .mobile-cart-toggle:active {
@@ -1739,6 +1744,14 @@ body.public-menu-page .cart-remove-btn {
   line-height: 1;
 }
 
+body.public-menu-page .cart-qty-btn,
+body.public-menu-page .cart-remove-btn,
+body.public-menu-page .cart-trigger,
+body.public-menu-page .add-btn,
+body.public-menu-page .menu-filter-pill {
+  touch-action: manipulation;
+}
+
 body.public-menu-page .mobile-cart-backdrop {
   display: block;
   position: fixed;
@@ -1756,6 +1769,10 @@ body.public-menu-page.cart-open {
 
 body.public-menu-page.cart-open .cart-pane {
   transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: transform 240ms ease, opacity 180ms ease;
 }
 
 body.public-menu-page.cart-open .mobile-cart-backdrop {
