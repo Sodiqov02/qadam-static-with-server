@@ -200,6 +200,10 @@
     }
     const original = button.dataset.originalLabel || button.textContent;
     button.dataset.originalLabel = original;
+    const lockedWidth = button.offsetWidth;
+    if (lockedWidth) {
+      button.style.width = `${lockedWidth}px`;
+    }
     button.textContent = "Qo'shildi";
     button.disabled = true;
     button.classList.add("is-added");
@@ -207,7 +211,8 @@
       button.textContent = original;
       button.disabled = false;
       button.classList.remove("is-added");
-    }, 600);
+      button.style.width = "";
+    }, 480);
   }
 
   function renderMenuSkeleton(count) {
@@ -362,19 +367,11 @@
 
       const sub = document.createElement("p");
       sub.className = "cart-item-sub";
-      safeText(sub, `${formatPrice(effectivePrice(item.price))} x ${qty}`);
+      safeText(sub, `${formatPrice(effectivePrice(item.price))} / dona`);
       info.appendChild(sub);
 
-      const price = document.createElement("span");
-      price.className = "cart-item-price";
-      safeText(price, formatPrice(lineTotal));
-
       main.appendChild(info);
-      main.appendChild(price);
       li.appendChild(main);
-
-      const actions = document.createElement("div");
-      actions.className = "cart-item-actions";
 
       const qtyControl = document.createElement("div");
       qtyControl.className = "cart-qty";
@@ -408,14 +405,31 @@
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "cart-remove-btn";
-      safeText(removeBtn, "Olib tashlash");
+      removeBtn.setAttribute("aria-label", `${item.name} ni olib tashlash`);
+      safeText(removeBtn, "×");
       removeBtn.addEventListener("click", function () {
         removeFromCart(item.id);
       });
 
+      const side = document.createElement("div");
+      side.className = "cart-item-side";
+
+      const topLine = document.createElement("div");
+      topLine.className = "cart-item-topline";
+
+      const price = document.createElement("span");
+      price.className = "cart-item-price";
+      safeText(price, formatPrice(lineTotal));
+
+      topLine.appendChild(price);
+      topLine.appendChild(removeBtn);
+
+      const actions = document.createElement("div");
+      actions.className = "cart-item-actions";
       actions.appendChild(qtyControl);
-      actions.appendChild(removeBtn);
-      li.appendChild(actions);
+      side.appendChild(topLine);
+      side.appendChild(actions);
+      li.appendChild(side);
       cartList.appendChild(li);
     });
     cartTotal.textContent = formatPrice(total);
