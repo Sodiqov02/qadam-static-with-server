@@ -118,36 +118,40 @@
           <button id="mobile-cart-close" class="ghost-btn mobile-cart-close" type="button">Yopish</button>
         </div>
       </div>
-      <div class="cart-body">
-        <div id="cart-empty" class="muted">Savat hozircha bo'sh. Yoqtirgan taomingizni qo'shing.</div>
-        <ul id="cart-list" class="cart-list"></ul>
+      <div class="cart-items">
+        <div class="cart-body">
+          <div id="cart-empty" class="muted">Savat hozircha bo'sh. Yoqtirgan taomingizni qo'shing.</div>
+          <ul id="cart-list" class="cart-list"></ul>
+        </div>
       </div>
-      <div class="cart-summary">
-        <p class="muted cart-summary-label">Umumiy summa</p>
-        <p id="cart-total" class="total-line"></p>
-      </div>
-      <form id="order-form" class="form">
-        <div class="grid-two">
-          <div class="field">
-            <label>Ism</label>
-            <input name="name" autocomplete="name" required />
+      <div class="cart-form">
+        <div class="cart-summary">
+          <p class="muted cart-summary-label">Umumiy summa</p>
+          <p id="cart-total" class="total-line"></p>
+        </div>
+        <form id="order-form" class="form">
+          <div class="grid-two">
+            <div class="field">
+              <label>Ism</label>
+              <input name="name" autocomplete="name" required />
+            </div>
+            <div class="field">
+              <label>Telefon</label>
+              <input name="phone" autocomplete="tel" required />
+            </div>
           </div>
           <div class="field">
-            <label>Telefon</label>
-            <input name="phone" autocomplete="tel" required />
+            <label>Manzil</label>
+            <textarea name="address" autocomplete="street-address" required></textarea>
           </div>
-        </div>
-        <div class="field">
-          <label>Manzil</label>
-          <textarea name="address" autocomplete="street-address" required></textarea>
-        </div>
-        <div class="field">
-          <label>Izoh (ixtiyoriy)</label>
-          <textarea name="comment" placeholder="-"></textarea>
-        </div>
-        <button type="submit" id="submit-order">Yuborish</button>
-        <p id="order-status" class="muted status"></p>
-      </form>
+          <div class="field">
+            <label>Izoh (ixtiyoriy)</label>
+            <textarea name="comment" placeholder="-"></textarea>
+          </div>
+          <button type="submit" id="submit-order">Yuborish</button>
+          <p id="order-status" class="muted status"></p>
+        </form>
+      </div>
     </aside>
   <button id="mobile-cart-toggle" class="mobile-cart-toggle cart-trigger" type="button" aria-label="Savat">
     <span class="cart-button-label">Savat</span>

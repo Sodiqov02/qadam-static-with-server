@@ -124,6 +124,17 @@
     }
   }
 
+  function scrollActiveCategoryIntoView() {
+    const active = document.querySelector(".menu-filter-pill.is-active");
+    if (active) {
+      active.scrollIntoView({
+        behavior: "smooth",
+        inline: "center",
+        block: "nearest",
+      });
+    }
+  }
+
   function renderMenuFilters(categories) {
     if (!menuFilters) {
       return;
@@ -153,6 +164,8 @@
       });
       menuFilters.appendChild(filterBtn);
     });
+
+    window.requestAnimationFrame(scrollActiveCategoryIntoView);
   }
 
   function setStatus(message, type) {
@@ -185,10 +198,16 @@
     if (!button) {
       return;
     }
+    const original = button.dataset.originalLabel || button.textContent;
+    button.dataset.originalLabel = original;
+    button.textContent = "Qo'shildi";
+    button.disabled = true;
     button.classList.add("is-added");
     window.setTimeout(function () {
+      button.textContent = original;
+      button.disabled = false;
       button.classList.remove("is-added");
-    }, 320);
+    }, 600);
   }
 
   function renderMenuSkeleton(count) {
@@ -200,26 +219,26 @@
       card.className = "menu-card menu-card-skeleton";
 
       const image = document.createElement("div");
-      image.className = "menu-item-image";
+      image.className = "menu-item-image skeleton";
       card.appendChild(image);
 
       const body = document.createElement("div");
       body.className = "menu-card-body";
 
       const chip = document.createElement("div");
-      chip.className = "skeleton-chip";
+      chip.className = "skeleton-chip skeleton";
       body.appendChild(chip);
 
       const title = document.createElement("div");
-      title.className = "skeleton-line title";
+      title.className = "skeleton-line title skeleton";
       body.appendChild(title);
 
       const line = document.createElement("div");
-      line.className = "skeleton-line body";
+      line.className = "skeleton-line body skeleton";
       body.appendChild(line);
 
       const shortLine = document.createElement("div");
-      shortLine.className = "skeleton-line body short";
+      shortLine.className = "skeleton-line body short skeleton";
       body.appendChild(shortLine);
 
       card.appendChild(body);
@@ -404,6 +423,8 @@
 
   function renderMenu(categories) {
     menuEl.innerHTML = "";
+    const grid = document.createElement("div");
+    grid.className = "menu-section-grid";
     let renderedSections = 0;
     const visibleCategories = categories.filter((cat) => {
       if (activeCategoryId === "all") {
@@ -414,36 +435,9 @@
 
     visibleCategories.forEach((cat) => {
       const items = Array.isArray(cat.items) ? cat.items : [];
-      if (!items.length && activeCategoryId === "all") {
+      if (!items.length) {
         return;
       }
-
-      const section = document.createElement("section");
-      section.className = "menu-section";
-
-      if (cat.title || cat.description) {
-        const head = document.createElement("div");
-        head.className = "menu-section-head";
-
-        if (cat.title) {
-          const title = document.createElement("h3");
-          title.className = "menu-section-title";
-          safeText(title, cat.title);
-          head.appendChild(title);
-        }
-
-        if (cat.description) {
-          const subtitle = document.createElement("p");
-          subtitle.className = "menu-section-subtitle";
-          safeText(subtitle, cat.description);
-          head.appendChild(subtitle);
-        }
-
-        section.appendChild(head);
-      }
-
-      const sectionGrid = document.createElement("div");
-      sectionGrid.className = "menu-section-grid";
 
       items.forEach((item) => {
         const card = document.createElement("div");
@@ -505,6 +499,7 @@
         body.className = "menu-card-body";
 
         const title = document.createElement("h4");
+        title.className = "menu-item-title";
         safeText(title, item.name);
         body.appendChild(title);
 
@@ -520,7 +515,7 @@
         const priceRow = document.createElement("div");
         priceRow.className = "price-row";
         const price = document.createElement("div");
-        price.className = "price";
+        price.className = "price menu-item-price";
         safeText(price, formatPrice(effectivePrice(item.price)));
         if (discountPercent) {
           const note = document.createElement("div");
@@ -538,25 +533,16 @@
         priceRow.appendChild(price);
         priceRow.appendChild(btn);
         card.appendChild(priceRow);
-        sectionGrid.appendChild(card);
+        grid.appendChild(card);
       });
-
-      if (items.length) {
-        section.appendChild(sectionGrid);
-      } else {
-        const empty = document.createElement("p");
-        empty.className = "muted";
-        safeText(empty, "Bu bo'limda hozircha taom yo'q.");
-        section.appendChild(empty);
-      }
-
-      menuEl.appendChild(section);
       renderedSections += 1;
     });
 
     if (!renderedSections) {
       menuEl.innerHTML = `<div class="empty-state compact">Bu bo'limda hozircha taom yo'q.</div>`;
+      return;
     }
+    menuEl.appendChild(grid);
   }
 
   async function loadTenant() {
@@ -687,7 +673,7 @@
   }
 
   async function loadMenu() {
-    renderMenuSkeleton(6);
+    renderMenuSkeleton(9);
     const res = await fetch(tenantPath("/menu"), { credentials: "same-origin" });
     if (!res.ok) {
       throw new Error("Menu yuklab bo'lmadi");
@@ -751,7 +737,7 @@
       menuEl.innerHTML = `<p class="muted">${tenantRequiredError}</p>`;
       return;
     }
-    renderMenuSkeleton(6);
+    renderMenuSkeleton(9);
     try {
       await loadTenant();
       await loadPromotions();
