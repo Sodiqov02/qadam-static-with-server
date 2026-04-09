@@ -17,7 +17,10 @@
         <a class="ghost-btn" id="orders-link" href="/my-orders">Buyurtmalarim</a>
         <a class="ghost-btn" id="header-telegram-link" href="#" target="_blank" rel="noopener">Telegram</a>
         <a class="ghost-btn" id="admin-link" href="/admin">Boshqaruv</a>
-        <button class="ghost-btn cart-trigger" id="header-cart-toggle" type="button">Savat</button>
+        <button class="ghost-btn cart-trigger" id="header-cart-toggle" type="button" aria-label="Savat">
+          <span class="cart-button-label">Savat</span>
+          <span class="cart-action-badge" id="header-cart-badge" hidden>0</span>
+        </button>
       </div>
     </header>
 
@@ -146,7 +149,10 @@
         <p id="order-status" class="muted status"></p>
       </form>
     </aside>
-  <button id="mobile-cart-toggle" class="mobile-cart-toggle cart-trigger" type="button">Savat</button>
+  <button id="mobile-cart-toggle" class="mobile-cart-toggle cart-trigger" type="button" aria-label="Savat">
+    <span class="cart-button-label">Savat</span>
+    <span class="cart-action-badge" id="mobile-cart-badge" hidden>0</span>
+  </button>
   <div id="cart-toast" class="cart-toast" aria-live="polite" aria-atomic="true"></div>
   <script src="/static/script.js" defer></script>
 </body>

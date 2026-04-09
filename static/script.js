@@ -10,6 +10,8 @@
   const clearBtn = document.getElementById("clear-cart");
   const mobileCartToggle = document.getElementById("mobile-cart-toggle");
   const headerCartToggle = document.getElementById("header-cart-toggle");
+  const mobileCartBadge = document.getElementById("mobile-cart-badge");
+  const headerCartBadge = document.getElementById("header-cart-badge");
   const mobileCartClose = document.getElementById("mobile-cart-close");
   const mobileCartBackdrop = document.getElementById("mobile-cart-backdrop");
   const orderForm = document.getElementById("order-form");
@@ -105,11 +107,20 @@
   }
 
   function updateCartToggles(totalQty) {
+    const countLabel = totalQty ? `${totalQty} ta mahsulot` : "Savat";
     if (mobileCartToggle) {
-      mobileCartToggle.textContent = totalQty ? `Savat - ${totalQty} ta` : "Savat";
+      mobileCartToggle.setAttribute("aria-label", countLabel);
     }
     if (headerCartToggle) {
-      headerCartToggle.textContent = totalQty ? `Savat (${totalQty})` : "Savat";
+      headerCartToggle.setAttribute("aria-label", countLabel);
+    }
+    if (mobileCartBadge) {
+      mobileCartBadge.hidden = totalQty <= 0;
+      mobileCartBadge.textContent = String(totalQty);
+    }
+    if (headerCartBadge) {
+      headerCartBadge.hidden = totalQty <= 0;
+      headerCartBadge.textContent = String(totalQty);
     }
   }
 
