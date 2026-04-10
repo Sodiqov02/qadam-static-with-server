@@ -1574,7 +1574,7 @@ body.public-menu-page .cart-pane {
   width: min(420px, calc(100vw - 32px));
   max-width: min(420px, calc(100vw - 32px));
   max-height: none;
-  padding: 18px;
+  padding: 0;
   border-radius: 28px;
   transform: translateX(calc(100% + 36px));
   opacity: 0;
@@ -1587,30 +1587,47 @@ body.public-menu-page .cart-pane {
   will-change: transform, opacity;
 }
 
-body.public-menu-page .cart-items {
-  flex: 0 0 312px;
-  max-height: 312px;
+body.public-menu-page .cart-scroll {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  padding: 18px 18px 24px;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding-right: 4px;
+}
+
+body.public-menu-page .cart-scroll::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  display: block;
+  height: 40px;
+  margin-top: -8px;
+  background: linear-gradient(to top, rgba(15, 23, 42, 0.16), transparent);
+  pointer-events: none;
+}
+
+body.public-menu-page .cart-items {
+  display: grid;
+  gap: 12px;
 }
 
 body.public-menu-page .cart-body {
-  min-height: 100%;
+  min-height: 0;
   overflow: visible;
 }
 
 body.public-menu-page .cart-form {
   display: grid;
   gap: 12px;
-  flex-shrink: 0;
 }
 
 body.public-menu-page .cart-pane .form {
   display: grid;
   gap: 10px;
-  flex: 0 0 auto;
   overflow: visible;
 }
 
@@ -1720,6 +1737,19 @@ body.public-menu-page .cart-item-actions {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: nowrap;
+}
+
+body.public-menu-page .scroll-to-form {
+  display: block;
+  width: fit-content;
+  margin: 4px auto 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #111111;
+  color: #ffffff;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.18);
 }
 
 body.public-menu-page .cart-summary {
@@ -1890,15 +1920,13 @@ body.public-menu-page .mobile-cart-close {
     height: min(88dvh, calc(100dvh - 8px));
     max-height: min(88dvh, calc(100dvh - 8px));
     border-radius: 22px 22px 0 0;
-    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
     transform: translateY(calc(100% + 20px));
     overflow: hidden;
     touch-action: pan-y;
   }
 
-  body.public-menu-page .cart-items {
-    flex: 0 0 292px;
-    max-height: 292px;
+  body.public-menu-page .cart-scroll {
+    padding: 14px 14px calc(24px + env(safe-area-inset-bottom));
   }
 
   body.public-menu-page.cart-open .cart-pane {
