@@ -146,7 +146,8 @@
   }
 
   function formatPrice(n) {
-    return `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
+    const amount = Number(n || 0).toLocaleString("ru-RU").replace(/\s/g, " ");
+    return `${amount} so'm`;
   }
 
   function effectivePrice(price) {

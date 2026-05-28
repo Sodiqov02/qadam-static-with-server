@@ -2285,11 +2285,15 @@ body.public-menu-page .menu-filters {
 
 body.public-menu-page .menu-filter-pill {
   min-height: 40px;
+  max-width: min(280px, calc(100vw - 96px));
   border-radius: 999px;
   border-color: transparent;
   background: transparent;
   color: #6d6257;
   font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 body.public-menu-page .menu-filter-pill:hover {
@@ -2337,14 +2341,45 @@ body.public-menu-page .menu-card-body {
 }
 
 body.public-menu-page .menu-item-title {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
   color: var(--premium-ink);
   font-size: 1.08rem;
   font-weight: 800;
 }
 
 body.public-menu-page .menu-card-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow-wrap: anywhere;
   color: #73695f;
   min-height: 42px;
+}
+
+body.public-menu-page .img-placeholder {
+  max-width: 100%;
+  padding: 12px;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+body.public-menu-page .menu-item-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+body.public-menu-page .price,
+body.public-menu-page .menu-item-price,
+body.public-menu-page .cart-item-price,
+body.public-menu-page .total-line {
+  overflow-wrap: anywhere;
 }
 
 body.public-menu-page .price-row {
@@ -2385,6 +2420,10 @@ body.public-menu-page #submit-order.is-loading {
 body.public-menu-page .cart-action-badge {
   color: #172033;
   background: #f1d49b;
+}
+
+body.public-menu-page .cart-action-badge[hidden] {
+  display: none !important;
 }
 
 body.public-menu-page .cart-pane {
