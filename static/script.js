@@ -54,6 +54,7 @@
   let menuCategories = [];
   let activeCategoryId = "all";
   let toastTimer = 0;
+  let isCartLoading = false;
 
   function extractSlug() {
     const slug = window.location.pathname.split("/")[2] || "";
@@ -242,6 +243,7 @@
     if (!menuFilters) {
       return;
     }
+    menuFilters.hidden = false;
     menuFilters.innerHTML = "";
 
     const allButton = document.createElement("button");
@@ -285,6 +287,56 @@
     submitBtn.textContent = isLoading ? "Yuborilmoqda..." : "Yuborish";
   }
 
+  function setCartLoading(isLoading) {
+    isCartLoading = Boolean(isLoading);
+    renderCart();
+  }
+
+  function renderFilterSkeleton(count) {
+    if (!menuFilters) {
+      return;
+    }
+    menuFilters.hidden = false;
+    menuFilters.innerHTML = "";
+    for (let i = 0; i < count; i += 1) {
+      const pill = document.createElement("span");
+      pill.className = "menu-filter-pill menu-filter-skeleton skeleton";
+      pill.setAttribute("aria-hidden", "true");
+      menuFilters.appendChild(pill);
+    }
+  }
+
+  function renderMenuError(message) {
+    menuEl.innerHTML = "";
+    menuEl.removeAttribute("aria-busy");
+    if (menuFilters) {
+      menuFilters.hidden = true;
+      menuFilters.innerHTML = "";
+    }
+
+    const block = document.createElement("div");
+    block.className = "menu-error-state";
+    block.setAttribute("role", "status");
+
+    const title = document.createElement("h3");
+    safeText(title, "Menyuni yuklab bo'lmadi");
+    block.appendChild(title);
+
+    const copy = document.createElement("p");
+    safeText(copy, message || "Internet aloqasi yoki server javobida muammo bor. Qayta urinib ko'ring.");
+    block.appendChild(copy);
+
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "ghost-btn menu-retry-btn";
+    safeText(retry, "Qayta urinish");
+    retry.addEventListener("click", function () {
+      boot();
+    });
+    block.appendChild(retry);
+    menuEl.appendChild(block);
+  }
+
   function showCartToast(message) {
     if (!cartToast) {
       return;
@@ -320,6 +372,7 @@
 
   function renderMenuSkeleton(count) {
     menuEl.innerHTML = "";
+    menuEl.setAttribute("aria-busy", "true");
     const grid = document.createElement("div");
     grid.className = "menu-section-grid is-skeleton-grid";
     for (let i = 0; i < count; i += 1) {
@@ -361,9 +414,11 @@
     tenantPlan = "basic";
     menuCategories = [];
     activeCategoryId = "all";
+    isCartLoading = false;
     cart.clear();
     menuEl.innerHTML = "";
     if (menuFilters) {
+      menuFilters.hidden = false;
       menuFilters.innerHTML = "";
     }
     setStatus("");
@@ -452,6 +507,9 @@
     clearBtn.disabled = !items.length;
     if (!items.length) {
       cartEmpty.style.display = "block";
+      cartEmpty.textContent = isCartLoading
+        ? "Savat tiklanmoqda..."
+        : "Savat hozircha bo'sh. Yoqtirgan taomingizni qo'shing.";
       cartTotal.textContent = formatPrice(0);
       if (scrollToFormFab) {
         scrollToFormFab.classList.remove("visible");
@@ -548,6 +606,7 @@
 
   function renderMenu(categories) {
     menuEl.innerHTML = "";
+    menuEl.removeAttribute("aria-busy");
     const grid = document.createElement("div");
     grid.className = "menu-section-grid";
     let renderedSections = 0;
@@ -602,9 +661,11 @@
           img.loading = "lazy";
           img.className = "menu-image-loading";
           img.addEventListener("load", function () {
+            img.classList.add("is-loaded");
             img.classList.remove("menu-image-loading");
           });
           img.addEventListener("error", function () {
+            img.classList.remove("menu-image-loading");
             imageWrap.innerHTML = "";
             const fallback = document.createElement("div");
             fallback.className = "img-placeholder";
@@ -664,6 +725,7 @@
     });
 
     if (!renderedSections) {
+      menuEl.removeAttribute("aria-busy");
       menuEl.innerHTML = `<div class="empty-state compact">Bu bo'limda hozircha taom yo'q.</div>`;
       return;
     }
@@ -798,6 +860,7 @@
   }
 
   async function loadMenu() {
+    renderFilterSkeleton(4);
     renderMenuSkeleton(9);
     const res = await fetch(tenantPath("/menu"), { credentials: "same-origin" });
     if (!res.ok) {
@@ -811,6 +874,7 @@
     renderMenuFilters(menuCategories);
     renderMenu(menuCategories);
     restoreCartState(menuCategories);
+    isCartLoading = false;
     renderCart();
   }
 
@@ -865,14 +929,17 @@
       return;
     }
     renderMenuSkeleton(9);
+    renderFilterSkeleton(4);
+    setCartLoading(true);
     try {
       await loadTenant();
       await loadPromotions();
       await loadMenu();
     } catch (err) {
       const message = (err && err.message) || "Xatolik";
+      setCartLoading(false);
       setStatus(message, "is-error");
-      menuEl.innerHTML = `<p class="muted">${message}</p>`;
+      renderMenuError(message);
     }
   }
 

@@ -189,6 +189,10 @@ def install_edge_routes(page: Page, menu_payload: dict) -> None:
     page.route("**/uploads/missing-edge-image.jpg", lambda route: route.fulfill(status=404, body="missing"))
 
 
+def install_menu_error_route(page: Page) -> None:
+    page.route("**/t/*/menu", lambda route: route.fulfill(status=500, json={"detail": "menu unavailable"}))
+
+
 def run_smoke(url: str, screenshot_dir: Path) -> list[str]:
     issues: list[str] = []
     screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -388,15 +392,79 @@ def run_edge_smoke(url: str, screenshot_dir: Path) -> list[str]:
     return issues
 
 
+def run_loading_error_smoke(url: str, screenshot_dir: Path) -> list[str]:
+    issues: list[str] = []
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+
+        loading_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        loading_page = loading_context.new_page()
+        pending_routes = []
+        loading_page.route("**/t/*/menu", lambda route: pending_routes.append(route))
+        loading_page.goto(url, wait_until="domcontentloaded")
+        loading_page.locator(".menu-card-skeleton").first.wait_for(timeout=5000)
+        loading_page.locator(".menu-filter-skeleton").first.wait_for(timeout=5000)
+        loading_page.screenshot(path=screenshot_dir / "phase5-loading-menu.png", full_page=True)
+        assert_true(loading_page.locator(".menu-card-skeleton").count() >= 3, "menu skeleton cards are missing", issues)
+        assert_true(loading_page.locator(".menu-filter-skeleton").count() >= 2, "category skeleton tabs are missing", issues)
+        assert_true(loading_page.locator("#menu[aria-busy='true']").count() == 1, "menu is not marked aria-busy while loading", issues)
+        for route in pending_routes:
+            route.abort()
+        loading_context.close()
+
+        error_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        error_page = error_context.new_page()
+        install_menu_error_route(error_page)
+        error_page.goto(url, wait_until="networkidle")
+        error_page.locator(".menu-error-state").wait_for(timeout=8000)
+        error_page.screenshot(path=screenshot_dir / "phase5-error-menu.png", full_page=True)
+        assert_true(error_page.locator(".menu-error-state").is_visible(), "friendly menu error state is not visible", issues)
+        assert_true(error_page.locator(".menu-retry-btn").is_visible(), "menu retry button is not visible", issues)
+        assert_true(error_page.locator("#menu[aria-busy='true']").count() == 0, "menu remains aria-busy after error", issues)
+
+        error_page.unroute("**/t/*/menu")
+        install_edge_routes(error_page, EDGE_MENU)
+        error_page.locator(".menu-retry-btn").click()
+        error_page.locator(".menu-card").first.wait_for(timeout=8000)
+        error_page.screenshot(path=screenshot_dir / "phase5-retry-menu.png", full_page=True)
+        retry_metrics = page_metrics(error_page)
+        assert_true(retry_metrics["cards"] == 3, "retry did not render menu cards after recovery", issues)
+        assert_true(retry_metrics["scrollWidth"] <= retry_metrics["clientWidth"], "retry recovery has horizontal overflow", issues)
+        error_context.close()
+
+        print(
+            json.dumps(
+                {
+                    "url": url,
+                    "mode": "loading-error",
+                    "screenshots": [str(p) for p in sorted(screenshot_dir.glob("phase5-*.png"))],
+                    "issues": issues,
+                },
+                indent=2,
+            )
+        )
+        browser.close()
+
+    return issues
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run public menu UX smoke checks with Playwright Chromium.")
     parser.add_argument("--url", default=DEFAULT_URL)
     parser.add_argument("--screenshots", type=Path, default=DEFAULT_SCREENSHOT_DIR)
     parser.add_argument("--edge", action="store_true", help="Run mocked edge-case menu data checks.")
+    parser.add_argument("--loading-error", action="store_true", help="Run loading and error UX checks.")
     args = parser.parse_args()
 
     try:
-        issues = run_edge_smoke(args.url, args.screenshots) if args.edge else run_smoke(args.url, args.screenshots)
+        if args.loading_error:
+            issues = run_loading_error_smoke(args.url, args.screenshots)
+        elif args.edge:
+            issues = run_edge_smoke(args.url, args.screenshots)
+        else:
+            issues = run_smoke(args.url, args.screenshots)
     except PlaywrightTimeoutError as exc:
         print(json.dumps({"url": args.url, "issues": [f"timeout: {exc}"]}, indent=2))
         return 1
