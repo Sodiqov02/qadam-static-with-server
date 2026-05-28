@@ -2642,6 +2642,19 @@ body.public-menu-page .footer-label {
     height: min(92dvh, calc(100dvh - 8px));
     max-height: min(92dvh, calc(100dvh - 8px));
     border-radius: 22px 22px 0 0;
+    transform: translateY(calc(100% + 24px));
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform 240ms ease, opacity 180ms ease, visibility 0s linear 240ms;
+  }
+
+  body.public-menu-page.cart-open .cart-pane {
+    transform: translateY(0);
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: transform 240ms ease, opacity 180ms ease;
   }
 
   body.public-menu-page .cart-scroll {

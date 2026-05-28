@@ -68,6 +68,60 @@
     return `/t/${encodeURIComponent(slug)}${path}`;
   }
 
+  function cartStorageKey() {
+    const slug = activeSlug || extractSlug();
+    return slug ? `qadam.cart.${slug}` : "";
+  }
+
+  function saveCartState() {
+    const key = cartStorageKey();
+    if (!key) {
+      return;
+    }
+    try {
+      const payload = Array.from(cart.values()).map(({ item, qty }) => ({
+        id: item.id,
+        qty,
+      }));
+      window.localStorage.setItem(key, JSON.stringify(payload));
+    } catch (_) {
+      // Cart persistence is a UX enhancement; storage failures should not block ordering.
+    }
+  }
+
+  function restoreCartState(categories) {
+    const key = cartStorageKey();
+    if (!key) {
+      return;
+    }
+    let payload = [];
+    try {
+      payload = JSON.parse(window.localStorage.getItem(key) || "[]");
+    } catch (_) {
+      payload = [];
+    }
+    if (!Array.isArray(payload) || !payload.length) {
+      return;
+    }
+
+    const itemMap = new Map();
+    (categories || []).forEach((category) => {
+      (category.items || []).forEach((item) => {
+        itemMap.set(String(item.id), item);
+      });
+    });
+
+    cart.clear();
+    payload.forEach((entry) => {
+      const item = itemMap.get(String(entry && entry.id));
+      const qty = Number(entry && entry.qty);
+      if (item && Number.isFinite(qty) && qty > 0) {
+        cart.set(item.id, { item, qty: Math.floor(qty) });
+      }
+    });
+    saveCartState();
+  }
+
   function isRenderableImageUrl(value) {
     if (!value || typeof value !== "string") {
       return false;
@@ -353,6 +407,7 @@
     const current = cart.get(item.id) || { item, qty: 0 };
     current.qty += 1;
     cart.set(item.id, current);
+    saveCartState();
     animateAddButton(triggerButton);
     showCartToast(`${item.name || "Taom"} savatga qo'shildi`);
     renderCart();
@@ -369,16 +424,19 @@
     } else {
       cart.set(id, current);
     }
+    saveCartState();
     renderCart();
   }
 
   function clearCart() {
     cart.clear();
+    saveCartState();
     renderCart();
   }
 
   function removeFromCart(id) {
     cart.delete(id);
+    saveCartState();
     renderCart();
   }
 
@@ -751,6 +809,8 @@
     }
     renderMenuFilters(menuCategories);
     renderMenu(menuCategories);
+    restoreCartState(menuCategories);
+    renderCart();
   }
 
   async function submitOrder(evt) {
