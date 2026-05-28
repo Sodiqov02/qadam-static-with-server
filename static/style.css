@@ -1154,7 +1154,7 @@ body.public-menu-page .hero-content {
   display: grid;
   gap: 16px;
   align-self: end;
-}
+} 
 
 body.public-menu-page .hero-content h2 {
   margin: 0;

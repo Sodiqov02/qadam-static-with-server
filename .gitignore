@@ -1,56 +1,19 @@
-# Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
-# Virtual Environment
-.venv/
 venv/
-ENV/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Python
+.venv/
 __pycache__/
-*.py[cod]
 *.pyc
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Project specific
-alembic/versions/__pycache__/
 node_modules/
-*.sqlite3
+dist/
+build/
+
 *.db
-data/orders.json
-*.log
-*.err
-*.out
+*.sqlite
+*.sqlite3
+
+.DS_Store
+Thumbs.db

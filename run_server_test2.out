@@ -1,0 +1,7 @@
+INFO:     127.0.0.1:14301 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6391 - "GET /t/smoke-a/menu HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6391 - "GET /t/smoke-b/menu HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6391 - "POST /t/smoke-a/orders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6391 - "POST /t/smoke-b/orders HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6391 - "GET /t/smoke-a/api/orders/history?phone=%2B998900000001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:6391 - "GET /t/smoke-b/api/orders/history?phone=%2B998900000002 HTTP/1.1" 200 OK
