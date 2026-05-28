@@ -30,48 +30,71 @@
         <div class="hero-overlay"></div>
         <div class="hero-layout">
           <div class="hero-content">
-            <p class="hero-eyebrow">Restoran vitrinasi</p>
+            <p class="hero-eyebrow">RESTORAN VITRINASI</p>
             <h2 id="hero-title">Qadam</h2>
-            <p id="hero-desc" class="hero-desc">Mazali taomlar va tez yetkazib berish.</p>
+            <p id="hero-desc" class="hero-desc">A refined online ordering experience for restaurants, crafted for direct orders, smooth checkout and operational handoff.</p>
             <div class="hero-actions">
-              <button class="ghost-btn hero-btn" id="hero-cta" type="button">Menyuni ko'rish</button>
+              <button class="ghost-btn hero-btn" id="hero-cta" type="button">Tanlangan menyuni ko'rish</button>
               <button class="ghost-btn hero-secondary cart-trigger" type="button">Savatni ochish</button>
             </div>
             <div class="hero-highlights">
-              <span class="hero-chip">Tez buyurtma</span>
-              <span class="hero-chip">Yangi pishiriladi</span>
-              <span class="hero-chip">Yetkazib berish mavjud</span>
+              <span class="hero-chip">Direct orders</span>
+              <span class="hero-chip">Telegram-ready</span>
+              <span class="hero-chip">Admin workflow</span>
             </div>
           </div>
           <aside class="hero-aside">
             <div class="promo-plate">
-              <p class="pill">Issiq &amp; mazali</p>
-              <h3>Buyurtma bir necha qadamda</h3>
+              <p class="pill">Live order flow</p>
+              <h3>New order</h3>
               <p class="promo-copy">
-                Menyudan tanlang, savatni to'ldiring va buyurtmani shu sahifada yakunlang.
+                A compact preview of the handoff from storefront to operations.
               </p>
               <div class="promo-qr">
-                <div class="qr-placeholder">
-                  <img id="bot-qr" alt="Telegram QR" />
+                <div class="order-preview">
+                  <div class="order-preview-head">
+                    <span class="order-preview-status"></span>
+                    <span>Yangi buyurtma</span>
+                  </div>
+                  <div class="order-preview-row">Classic Burger x 1</div>
+                  <div class="order-preview-row">Caesar Salad x 1</div>
+                  <strong class="order-preview-total">Jami: 74 000 so'm</strong>
+                  <em class="order-preview-foot">Telegram bot va admin panelga yuboriladi</em>
                 </div>
-                <div class="promo-meta">
-                  <span>Telegram orqali</span>
-                  <a id="bot-link" href="#" target="_blank" rel="noopener">@bot</a>
-                  <small id="bot-meta">Bot mavjud bo'lsa tezkor buyurtma uchun foydalaning</small>
-                </div>
+              </div>
+              <div class="promo-meta bot-reference-links" hidden>
+                <img id="bot-qr" alt="Telegram QR" />
+                <a id="bot-link" href="#" target="_blank" rel="noopener">@bot</a>
+                <small id="bot-meta">Bot mavjud bo'lsa tezkor buyurtma uchun foydalaning</small>
               </div>
             </div>
           </aside>
         </div>
       </section>
 
+      <section class="trust-strip" aria-label="Qadam value">
+        <article class="trust-card">
+          <h3>To'g'ridan-to'g'ri buyurtma</h3>
+          <p>Mijozlar buyurtmani restoran sahifasidan ortiqcha vositachilarsiz beradi.</p>
+        </article>
+        <article class="trust-card">
+          <h3>E'tibor bilan tayyorlangan oqim</h3>
+          <p>Taom tanlashdan buyurtmani yakunlashgacha bo'lgan jarayon toza va ishonchli ko'rinadi.</p>
+        </article>
+        <article class="trust-card">
+          <h3>Ish jarayoniga tayyor</h3>
+          <p>Buyurtmalarni Telegram bot va admin panelga uzatish oqimi uchun tayyorlangan.</p>
+        </article>
+      </section>
+
       <section class="menu-discovery">
         <div class="menu-toolbar">
           <div>
             <p class="eyebrow">Bugungi tanlov</p>
-            <h2>Menyu</h2>
+            <h2>Tanlangan menyu</h2>
+            <p class="menu-toolbar-subtitle">Restoran taomlari tezkor online buyurtma uchun tayyorlangan.</p>
           </div>
-          <p class="menu-toolbar-copy">Kategoriya bo'yicha tanlang va mahsulotlarni tez qo'shing.</p>
+          <p class="menu-toolbar-copy">Kategoriyani tanlang va yoqqan taomlarni savatga qo'shing.</p>
         </div>
         <div id="menu-filters" class="menu-filters"></div>
       </section>
