@@ -6,6 +6,8 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
 
 node_modules/
 dist/
@@ -14,6 +16,17 @@ build/
 *.db
 *.sqlite
 *.sqlite3
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/uploads/
+data/menu_images/
+
+*.log
+*.out
+*.err
+run_*.out
+run_*.err
 
 .DS_Store
 Thumbs.db
