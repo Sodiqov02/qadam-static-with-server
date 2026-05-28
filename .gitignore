@@ -13,6 +13,9 @@ node_modules/
 dist/
 build/
 
+_reference/
+screenshots/
+
 *.db
 *.sqlite
 *.sqlite3
