@@ -592,6 +592,37 @@ input:focus, textarea:focus, select:focus {
   width: 16px;
   height: 16px;
 }
+.color-control {
+  display: grid;
+  grid-template-columns: 64px minmax(86px, max-content);
+  align-items: center;
+  gap: 10px;
+}
+.color-control input[type="color"] {
+  width: 64px;
+  height: 42px;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  cursor: pointer;
+}
+.color-control input[type="color"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+.color-value {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
 textarea { resize: vertical; min-height: 70px; }
 .muted { color: var(--muted); }
 .cart-pane .muted { color: rgba(226, 232, 240, 0.72); }
@@ -2070,6 +2101,33 @@ body.public-menu-page.theme-dark {
   --premium-muted: #cbd5e1;
 }
 
+body.public-menu-page.theme-dark .site-header,
+body.public-menu-page.theme-dark .trust-card,
+body.public-menu-page.theme-dark .menu-card,
+body.public-menu-page.theme-dark .menu-filters,
+body.public-menu-page.theme-dark .menu-error-state {
+  color: #151923;
+}
+
+body.public-menu-page.theme-dark .site-header .eyebrow,
+body.public-menu-page.theme-dark .site-header #site-title,
+body.public-menu-page.theme-dark .trust-card h3,
+body.public-menu-page.theme-dark .menu-item-title,
+body.public-menu-page.theme-dark .menu-error-state h3 {
+  color: #151923;
+}
+
+body.public-menu-page.theme-dark .trust-card p,
+body.public-menu-page.theme-dark .menu-card-desc,
+body.public-menu-page.theme-dark .menu-error-state,
+body.public-menu-page.theme-dark .menu-filter-pill {
+  color: #6f675d;
+}
+
+body.public-menu-page.theme-dark .menu-filter-pill.is-active {
+  color: #fff6e7;
+}
+
 body.public-menu-page .page {
   width: min(1220px, calc(100% - 36px));
   padding-top: 20px;
@@ -2633,9 +2691,44 @@ body.public-menu-page .footer-label {
   }
 
   body.public-menu-page .site-header {
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
     overflow: hidden;
-    gap: 10px;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  body.public-menu-page .brand-block {
+    width: 100%;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 9px;
+  }
+
+  body.public-menu-page .site-logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+  }
+
+  body.public-menu-page #site-title {
+    font-size: clamp(1.15rem, 6vw, 1.55rem);
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    overflow-wrap: anywhere;
+  }
+
+  body.public-menu-page .site-actions {
+    width: 100%;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 7px;
+  }
+
+  body.public-menu-page .site-actions .ghost-btn {
+    min-height: 34px;
+    padding: 7px 10px;
+    font-size: 12px;
   }
 
   body.public-menu-page .hero {

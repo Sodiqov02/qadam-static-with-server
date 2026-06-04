@@ -76,11 +76,17 @@
           <div class="grid-two">
             <div class="field">
               <label for="brand-primary">Primary color</label>
-              <input id="brand-primary" type="color" value="#172033" />
+              <div class="color-control">
+                <input id="brand-primary" type="color" value="#172033" />
+                <span id="brand-primary-value" class="color-value">#172033</span>
+              </div>
             </div>
             <div class="field">
               <label for="brand-accent">Accent color</label>
-              <input id="brand-accent" type="color" value="#d6ad68" />
+              <div class="color-control">
+                <input id="brand-accent" type="color" value="#d6ad68" />
+                <span id="brand-accent-value" class="color-value">#d6ad68</span>
+              </div>
             </div>
           </div>
           <label class="checkbox-row">
@@ -181,6 +187,8 @@
     const brandLogo = document.getElementById("brand-logo");
     const brandPrimary = document.getElementById("brand-primary");
     const brandAccent = document.getElementById("brand-accent");
+    const brandPrimaryValue = document.getElementById("brand-primary-value");
+    const brandAccentValue = document.getElementById("brand-accent-value");
     const brandTheme = document.getElementById("brand-theme");
     const brandUseDefaultColors = document.getElementById("brand-use-default-colors");
 
@@ -354,9 +362,13 @@
       const disabled = brandUseDefaultColors.checked;
       brandPrimary.disabled = disabled;
       brandAccent.disabled = disabled;
+      brandPrimaryValue.textContent = brandPrimary.value;
+      brandAccentValue.textContent = brandAccent.value;
     }
 
     brandUseDefaultColors.addEventListener("change", syncBrandColorInputs);
+    brandPrimary.addEventListener("input", syncBrandColorInputs);
+    brandAccent.addEventListener("input", syncBrandColorInputs);
 
     brandingForm.addEventListener("submit", async (evt) => {
       evt.preventDefault();
