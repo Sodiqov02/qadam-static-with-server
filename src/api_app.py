@@ -131,6 +131,10 @@ class TenantPublic(BaseModel):
     name: str
     description: str | None = None
     hero_image: str | None = None
+    logo_url: str | None = None
+    primary_color: str | None = None
+    accent_color: str | None = None
+    theme_mode: str | None = None
     plan: str | None = None
     features: dict | None = None
     bot_username: str | None = None
@@ -140,6 +144,10 @@ class TenantPublic(BaseModel):
 class TenantAdminUpdate(BaseModel):
     description: str | None = None
     hero_image: str | None = None
+    logo_url: str | None = None
+    primary_color: str | None = None
+    accent_color: str | None = None
+    theme_mode: str | None = None
 
 
 class MenuItemAdminUpdate(BaseModel):
@@ -200,6 +208,10 @@ def _tenant_public(tenant):
         name=tenant.name,
         description=description,
         hero_image=hero_image,
+        logo_url=getattr(tenant, "logo_url", None),
+        primary_color=getattr(tenant, "primary_color", None),
+        accent_color=getattr(tenant, "accent_color", None),
+        theme_mode=getattr(tenant, "theme_mode", None) or "default",
         plan=tenant_plan(tenant),
         features=tenant_public_features(tenant),
         bot_username=getattr(tenant, "bot_username", None),
@@ -582,10 +594,19 @@ def admin_update_tenant(slug: str, payload: TenantAdminUpdate, tenant=Depends(_a
     hero_image = update_data.get("hero_image")
     if hero_image and not _is_tenant_upload_url(hero_image, tenant.slug, kind="hero"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "hero_image must point to this tenant hero upload path")
+    logo_url = update_data.get("logo_url")
+    if logo_url and not (
+        _is_tenant_upload_url(logo_url, tenant.slug)
+        or logo_url.startswith("http://")
+        or logo_url.startswith("https://")
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "logo_url must be http(s) or tenant upload path")
     try:
         updated = update_tenant_public_profile(tenant, update_data)
     except NoResultFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return _tenant_public(updated)
 
 

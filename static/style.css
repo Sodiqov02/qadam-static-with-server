@@ -581,6 +581,17 @@ input:focus, textarea:focus, select:focus {
   border-color: rgba(34, 211, 238, 0.5);
   box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.12);
 }
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.checkbox-row input {
+  width: 16px;
+  height: 16px;
+}
 textarea { resize: vertical; min-height: 70px; }
 .muted { color: var(--muted); }
 .cart-pane .muted { color: rgba(226, 232, 240, 0.72); }
@@ -1106,8 +1117,26 @@ body.public-menu-page .site-header {
 
 body.public-menu-page .brand-block {
   display: grid;
-  gap: 4px;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: center;
   min-width: 0;
+}
+
+body.public-menu-page .site-logo {
+  grid-row: 1 / span 2;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+  background: #fffaf1;
+  border: 1px solid rgba(185, 135, 71, 0.22);
+  box-shadow: 0 10px 20px rgba(38, 31, 24, 0.1);
+}
+
+body.public-menu-page .site-logo[hidden] {
+  display: none !important;
 }
 
 body.public-menu-page #site-title {
@@ -2016,6 +2045,8 @@ body.public-menu-page {
   --premium-navy: #172033;
   --premium-bronze: #b98747;
   --premium-gold: #d6ad68;
+  --brand-primary: var(--tenant-primary, var(--premium-navy));
+  --brand-accent: var(--tenant-accent, var(--premium-gold));
   --premium-line: rgba(57, 45, 31, 0.13);
   --premium-muted: #6f675d;
   color: var(--premium-ink);
@@ -2025,6 +2056,20 @@ body.public-menu-page {
     linear-gradient(180deg, #fffaf2 0%, var(--premium-bg) 62%, #eee4d5 100%);
 }
 
+body.public-menu-page.theme-light {
+  --premium-bg: #f8f4ec;
+  --premium-ivory: #fffaf3;
+  --premium-card: #fffaf3;
+}
+
+body.public-menu-page.theme-dark {
+  --premium-bg: #151923;
+  --premium-ivory: #1d2430;
+  --premium-card: #202838;
+  --premium-ink: #f8fafc;
+  --premium-muted: #cbd5e1;
+}
+
 body.public-menu-page .page {
   width: min(1220px, calc(100% - 36px));
   padding-top: 20px;
@@ -2032,7 +2077,7 @@ body.public-menu-page .page {
 
 body.public-menu-page .site-header {
   margin-bottom: 18px;
-  border-color: rgba(185, 135, 71, 0.22);
+  border-color: color-mix(in srgb, var(--brand-accent) 28%, transparent);
   background: rgba(255, 250, 241, 0.86);
   box-shadow: 0 18px 42px rgba(38, 31, 24, 0.08);
   backdrop-filter: blur(18px);
@@ -2060,7 +2105,7 @@ body.public-menu-page #site-title {
 }
 
 body.public-menu-page .ghost-btn {
-  border-color: rgba(185, 135, 71, 0.2);
+  border-color: color-mix(in srgb, var(--brand-accent) 24%, transparent);
   color: #4d463e;
   background: rgba(255, 250, 241, 0.52);
 }
@@ -2068,7 +2113,7 @@ body.public-menu-page .ghost-btn {
 body.public-menu-page .ghost-btn:hover {
   color: var(--premium-ink);
   background: rgba(255, 250, 241, 0.9);
-  border-color: rgba(185, 135, 71, 0.36);
+  border-color: color-mix(in srgb, var(--brand-accent) 42%, transparent);
   box-shadow: 0 10px 22px rgba(38, 31, 24, 0.08);
 }
 
@@ -2077,7 +2122,7 @@ body.public-menu-page .hero {
   border-radius: 34px;
   border-color: rgba(255, 250, 241, 0.46);
   box-shadow: 0 34px 80px rgba(21, 25, 35, 0.2);
-  background: var(--premium-charcoal);
+  background: var(--brand-primary);
 }
 
 body.public-menu-page .hero-overlay {
@@ -2116,7 +2161,7 @@ body.public-menu-page .hero-desc {
 body.public-menu-page .hero-btn {
   min-height: 50px;
   padding: 12px 18px;
-  background: linear-gradient(135deg, #fff6e7 0%, #d7ad67 100%);
+  background: linear-gradient(135deg, #fff6e7 0%, var(--brand-accent) 100%);
   color: #121721;
   border-color: rgba(255, 246, 231, 0.28);
   box-shadow: 0 18px 34px rgba(0, 0, 0, 0.24);
@@ -2133,7 +2178,7 @@ body.public-menu-page .hero-secondary {
 body.public-menu-page .hero-chip {
   min-height: 34px;
   padding: 7px 12px;
-  border-color: rgba(214, 173, 104, 0.28);
+  border-color: color-mix(in srgb, var(--brand-accent) 34%, transparent);
   background: rgba(17, 23, 34, 0.36);
   color: rgba(255, 246, 231, 0.86);
   backdrop-filter: blur(10px);
@@ -2450,9 +2495,9 @@ body.public-menu-page .menu-item-price {
 body.public-menu-page .add-btn,
 body.public-menu-page #submit-order,
 body.public-menu-page .mobile-cart-toggle {
-  background: linear-gradient(135deg, #172033 0%, #101722 54%, #9d7138 100%);
+  background: linear-gradient(135deg, var(--brand-primary) 0%, #101722 54%, color-mix(in srgb, var(--brand-accent) 72%, #5b3a16) 100%);
   color: #fff6e7;
-  border: 1px solid rgba(214, 173, 104, 0.24);
+  border: 1px solid color-mix(in srgb, var(--brand-accent) 30%, transparent);
   box-shadow: 0 16px 28px rgba(23, 32, 51, 0.2);
 }
 
@@ -2470,8 +2515,8 @@ body.public-menu-page #submit-order.is-loading {
 }
 
 body.public-menu-page .cart-action-badge {
-  color: #172033;
-  background: #f1d49b;
+  color: var(--brand-primary);
+  background: color-mix(in srgb, var(--brand-accent) 72%, #fff6e7);
 }
 
 body.public-menu-page .cart-action-badge[hidden] {
@@ -2519,7 +2564,7 @@ body.public-menu-page select:focus {
 }
 
 body.public-menu-page .scroll-to-form-fab {
-  background: linear-gradient(135deg, #d6ad68, #9d7138);
+  background: linear-gradient(135deg, var(--brand-accent), color-mix(in srgb, var(--brand-accent) 72%, #5b3a16));
   color: #151923;
 }
 

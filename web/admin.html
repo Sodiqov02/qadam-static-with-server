@@ -54,6 +54,47 @@
       <section class="orders-panel">
         <header class="content-head">
           <div>
+            <p class="eyebrow">Branding</p>
+            <h2>Restaurant profile</h2>
+          </div>
+        </header>
+        <form id="branding-form" class="form">
+          <div class="grid-two">
+            <div class="field">
+              <label for="brand-logo">Logo URL/path</label>
+              <input id="brand-logo" placeholder="/uploads/demo/logo.png" />
+            </div>
+            <div class="field">
+              <label for="brand-theme">Theme mode</label>
+              <select id="brand-theme">
+                <option value="default">Default</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid-two">
+            <div class="field">
+              <label for="brand-primary">Primary color</label>
+              <input id="brand-primary" type="color" value="#172033" />
+            </div>
+            <div class="field">
+              <label for="brand-accent">Accent color</label>
+              <input id="brand-accent" type="color" value="#d6ad68" />
+            </div>
+          </div>
+          <label class="checkbox-row">
+            <input id="brand-use-default-colors" type="checkbox" checked />
+            <span>Use default colors</span>
+          </label>
+          <button type="submit">Save branding</button>
+          <p id="branding-status" class="muted status"></p>
+        </form>
+      </section>
+
+      <section class="orders-panel">
+        <header class="content-head">
+          <div>
             <p class="eyebrow">Promotions</p>
             <h2>Manage</h2>
           </div>
@@ -135,6 +176,13 @@
     const avgEl = document.getElementById("stat-avg");
     const topItemsEl = document.getElementById("top-items");
     const analyticsStatus = document.getElementById("analytics-status");
+    const brandingForm = document.getElementById("branding-form");
+    const brandingStatus = document.getElementById("branding-status");
+    const brandLogo = document.getElementById("brand-logo");
+    const brandPrimary = document.getElementById("brand-primary");
+    const brandAccent = document.getElementById("brand-accent");
+    const brandTheme = document.getElementById("brand-theme");
+    const brandUseDefaultColors = document.getElementById("brand-use-default-colors");
 
     const promoForm = document.getElementById("promo-form");
     const promoStatus = document.getElementById("promo-status");
@@ -153,6 +201,7 @@
     async function bootstrapAdminAuth() {
       if (!tenantSlug) {
         analyticsStatus.textContent = tenantRequiredError;
+        brandingStatus.textContent = tenantRequiredError;
         promoStatus.textContent = tenantRequiredError;
         return false;
       }
@@ -168,6 +217,7 @@
       });
       if (!res.ok) {
         analyticsStatus.textContent = accessDeniedError;
+        brandingStatus.textContent = accessDeniedError;
         promoStatus.textContent = accessDeniedError;
         return false;
       }
@@ -278,6 +328,69 @@
       }
     }
 
+    async function loadBranding() {
+      brandingStatus.textContent = "";
+      if (!tenantSlug) {
+        brandingStatus.textContent = tenantRequiredError;
+        return;
+      }
+      const res = await fetch(tenantPath("/tenant"), { credentials: "include" });
+      if (!res.ok) {
+        brandingStatus.textContent = "Branding yuklab bo'lmadi.";
+        return;
+      }
+      const data = await res.json();
+      const hasPrimaryColor = /^#[0-9a-fA-F]{6}$/.test(data.primary_color || "");
+      const hasAccentColor = /^#[0-9a-fA-F]{6}$/.test(data.accent_color || "");
+      brandLogo.value = data.logo_url || "";
+      brandPrimary.value = hasPrimaryColor ? data.primary_color : "#172033";
+      brandAccent.value = hasAccentColor ? data.accent_color : "#d6ad68";
+      brandTheme.value = ["default", "light", "dark"].includes(data.theme_mode) ? data.theme_mode : "default";
+      brandUseDefaultColors.checked = !(hasPrimaryColor && hasAccentColor);
+      syncBrandColorInputs();
+    }
+
+    function syncBrandColorInputs() {
+      const disabled = brandUseDefaultColors.checked;
+      brandPrimary.disabled = disabled;
+      brandAccent.disabled = disabled;
+    }
+
+    brandUseDefaultColors.addEventListener("change", syncBrandColorInputs);
+
+    brandingForm.addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      brandingStatus.textContent = "";
+      if (!tenantSlug) {
+        brandingStatus.textContent = tenantRequiredError;
+        return;
+      }
+
+      const payload = {
+        logo_url: brandLogo.value.trim() || null,
+        primary_color: brandUseDefaultColors.checked ? null : (brandPrimary.value || null),
+        accent_color: brandUseDefaultColors.checked ? null : (brandAccent.value || null),
+        theme_mode: brandTheme.value || "default",
+      };
+      const res = await fetch(tenantPath("/api/admin/tenant"), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+      if (res.status === 401 || res.status === 403) {
+        brandingStatus.textContent = accessDeniedError;
+        return;
+      }
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        brandingStatus.textContent = error.detail || "Branding saqlanmadi.";
+        return;
+      }
+      brandingStatus.textContent = "Branding saqlandi.";
+      await loadBranding();
+    });
+
     promoForm.addEventListener("submit", async (evt) => {
       evt.preventDefault();
       promoStatus.textContent = "";
@@ -335,6 +448,7 @@
       if (!ok) {
         return;
       }
+      await loadBranding();
       await loadAnalytics("7d");
       await loadPromotions();
     }

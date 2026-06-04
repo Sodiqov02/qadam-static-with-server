@@ -30,6 +30,7 @@
   const botLink = document.getElementById("bot-link");
   const botQr = document.getElementById("bot-qr");
   const botMeta = document.getElementById("bot-meta");
+  const siteLogo = document.getElementById("site-logo");
   const siteTitle = document.getElementById("site-title");
   const footerTitle = document.getElementById("footer-title");
   const footerDescription = document.getElementById("footer-description");
@@ -138,6 +139,53 @@
       return parsed.protocol === "http:" || parsed.protocol === "https:";
     } catch (_) {
       return false;
+    }
+  }
+
+  function isHexColor(value) {
+    return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+  }
+
+  function resetBranding() {
+    document.body.classList.remove("theme-light", "theme-dark");
+    document.documentElement.style.removeProperty("--tenant-primary");
+    document.documentElement.style.removeProperty("--tenant-accent");
+    if (siteLogo) {
+      siteLogo.hidden = true;
+      siteLogo.onload = null;
+      siteLogo.onerror = null;
+      siteLogo.removeAttribute("src");
+    }
+  }
+
+  function applyTenantBranding(data) {
+    resetBranding();
+    if (!data || typeof data !== "object") {
+      return;
+    }
+
+    if (isRenderableImageUrl(data.logo_url) && siteLogo) {
+      siteLogo.alt = data.name ? `${data.name} logo` : "Restaurant logo";
+      siteLogo.hidden = true;
+      siteLogo.onload = function () {
+        siteLogo.hidden = false;
+      };
+      siteLogo.onerror = function () {
+        siteLogo.hidden = true;
+        siteLogo.removeAttribute("src");
+      };
+      siteLogo.src = data.logo_url;
+    }
+    if (isHexColor(data.primary_color)) {
+      document.documentElement.style.setProperty("--tenant-primary", data.primary_color.toLowerCase());
+    }
+    if (isHexColor(data.accent_color)) {
+      document.documentElement.style.setProperty("--tenant-accent", data.accent_color.toLowerCase());
+    }
+
+    const themeMode = String(data.theme_mode || "default").toLowerCase();
+    if (themeMode === "light" || themeMode === "dark") {
+      document.body.classList.add(`theme-${themeMode}`);
     }
   }
 
@@ -409,6 +457,7 @@
   }
 
   function clearTenantState() {
+    resetBranding();
     promotions = [];
     discountPercent = 0;
     tenantPlan = "basic";
@@ -738,6 +787,7 @@
       throw new Error("Tenant not found");
     }
     const data = await res.json();
+    applyTenantBranding(data);
     tenantPlan = data.plan || "basic";
     if (data.name) {
       heroTitle.textContent = data.name;

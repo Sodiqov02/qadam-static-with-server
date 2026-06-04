@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import logging
+import re
 import secrets
 from urllib.parse import quote, unquote
 
@@ -22,6 +23,8 @@ from src.db_models import (
 )
 
 PLAN_ORDER = {"basic": 0, "standard": 1, "vip": 2}
+THEME_MODES = {"default", "light", "dark"}
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 ORDER_STATUSES = ("NEW", "ACCEPTED", "COOKING", "READY", "COMPLETED", "CANCELED")
 COMPLETED_STATUSES = {"COMPLETED", "DONE", "APPROVED"}
 PROMOTION_TYPES = {"item_of_the_day", "happy_hours"}
@@ -979,6 +982,29 @@ def tenant_public_features(tenant: Tenant) -> dict:
     return public
 
 
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _normalize_brand_color(value: Any, field_name: str) -> str | None:
+    normalized = _normalize_optional_text(value)
+    if normalized is None:
+        return None
+    if not HEX_COLOR_RE.fullmatch(normalized):
+        raise ValueError(f"{field_name} must be a #RRGGBB color")
+    return normalized.lower()
+
+
+def _normalize_theme_mode(value: Any) -> str:
+    normalized = (_normalize_optional_text(value) or "default").lower()
+    if normalized not in THEME_MODES:
+        raise ValueError("theme_mode must be one of: default, light, dark")
+    return normalized
+
+
 def update_tenant_public_profile(tenant: Tenant, payload: Dict[str, Any]) -> Tenant:
     with get_session() as session:
         tenant_db = (
@@ -1008,6 +1034,15 @@ def update_tenant_public_profile(tenant: Tenant, payload: Dict[str, Any]) -> Ten
                 features.pop("hero_image", None)
             else:
                 features["hero_image"] = str(value).strip()
+
+        if "logo_url" in payload:
+            tenant_db.logo_url = _normalize_optional_text(payload.get("logo_url"))
+        if "primary_color" in payload:
+            tenant_db.primary_color = _normalize_brand_color(payload.get("primary_color"), "primary_color")
+        if "accent_color" in payload:
+            tenant_db.accent_color = _normalize_brand_color(payload.get("accent_color"), "accent_color")
+        if "theme_mode" in payload:
+            tenant_db.theme_mode = _normalize_theme_mode(payload.get("theme_mode"))
 
         tenant_db.features = features
         session.flush()
