@@ -158,7 +158,8 @@
     const initialParams = new URLSearchParams(window.location.search);
     const adminToken = initialParams.get("admin_token");
     const tenantRequiredError = "Tenant slug required. Open page as /t/<slug>/admin";
-    const accessDeniedError = "Access denied.";
+    const accessDeniedError = "Access denied. Open the admin link from Telegram again or request a new admin login link.";
+    let adminAccessDenied = false;
 
     const tenantPath = (path) => {
       if (!tenantSlug) throw new Error(tenantRequiredError);
@@ -198,6 +199,20 @@
 
     const formatPrice = (n) => `${Number(n || 0).toLocaleString("ru-RU")} so'm`;
 
+    function showAdminAccessDenied() {
+      adminAccessDenied = true;
+      analyticsStatus.textContent = accessDeniedError;
+      brandingStatus.textContent = accessDeniedError;
+      promoStatus.textContent = accessDeniedError;
+      brandingForm.querySelectorAll("input, select, button").forEach((control) => {
+        control.disabled = true;
+      });
+      promoForm.querySelectorAll("input, select, button").forEach((control) => {
+        control.disabled = true;
+      });
+      promoList.innerHTML = "";
+    }
+
     function replaceUrlWithoutAdminToken() {
       const url = new URL(window.location.href);
       url.searchParams.delete("admin_token");
@@ -224,9 +239,7 @@
         body: JSON.stringify({ token: adminToken, slug: tenantSlug }),
       });
       if (!res.ok) {
-        analyticsStatus.textContent = accessDeniedError;
-        brandingStatus.textContent = accessDeniedError;
-        promoStatus.textContent = accessDeniedError;
+        showAdminAccessDenied();
         return false;
       }
       replaceUrlWithoutAdminToken();
@@ -243,7 +256,7 @@
         credentials: "include",
       });
       if (res.status === 401) {
-        analyticsStatus.textContent = accessDeniedError;
+        showAdminAccessDenied();
         return;
       }
       if (res.status === 403) {
@@ -274,7 +287,7 @@
       }
       const res = await fetch(tenantPath("/api/admin/promotions"), { credentials: "include" });
       if (res.status === 401) {
-        promoStatus.textContent = accessDeniedError;
+        showAdminAccessDenied();
         return;
       }
       if (res.status === 403) {
@@ -336,8 +349,15 @@
       }
     }
 
-    async function loadBranding() {
-      brandingStatus.textContent = "";
+    async function loadBranding(options = {}) {
+      const preserveStatus = Boolean(options.preserveStatus);
+      if (!preserveStatus) {
+        brandingStatus.textContent = "";
+      }
+      if (adminAccessDenied) {
+        brandingStatus.textContent = accessDeniedError;
+        return;
+      }
       if (!tenantSlug) {
         brandingStatus.textContent = tenantRequiredError;
         return;
@@ -391,7 +411,7 @@
         body: JSON.stringify(payload),
       });
       if (res.status === 401 || res.status === 403) {
-        brandingStatus.textContent = accessDeniedError;
+        showAdminAccessDenied();
         return;
       }
       if (!res.ok) {
@@ -400,7 +420,7 @@
         return;
       }
       brandingStatus.textContent = "Branding saqlandi.";
-      await loadBranding();
+      await loadBranding({ preserveStatus: true });
     });
 
     promoForm.addEventListener("submit", async (evt) => {
@@ -435,7 +455,7 @@
         body: JSON.stringify(payload),
       });
       if (res.status === 401) {
-        promoStatus.textContent = accessDeniedError;
+        showAdminAccessDenied();
         return;
       }
       if (!res.ok) {
@@ -462,6 +482,9 @@
       }
       await loadBranding();
       await loadAnalytics("7d");
+      if (adminAccessDenied) {
+        return;
+      }
       await loadPromotions();
     }
 

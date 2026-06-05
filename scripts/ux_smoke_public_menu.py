@@ -736,6 +736,210 @@ def run_order_flow_smoke(url: str, screenshot_dir: Path) -> list[str]:
     return issues
 
 
+def run_admin_flow_smoke(url: str, screenshot_dir: Path) -> list[str]:
+    issues: list[str] = []
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    base_url = url.split("/t/")[0].rstrip("/")
+    menu_url = f"{base_url}/admin/menu/demo?admin_token=smoke"
+    admin_url = f"{base_url}/t/demo/admin?admin_token=smoke"
+    guidance = "Access denied. Open the admin link from Telegram again or request a new admin login link."
+
+    def install_login(page: Page) -> None:
+      page.route("**/admin/auth/login", lambda route: route.fulfill(json={"ok": True, "tenant_slug": "demo"}))
+
+    def empty_payload() -> dict:
+        return {"tenant": {"name": "Admin Smoke", "slug": "demo"}, "categories": [], "items": []}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+
+        failure_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        failure_page = failure_context.new_page()
+        failure_page_errors: list[str] = []
+        failure_page.on("pageerror", lambda exc: failure_page_errors.append(str(exc)))
+        install_login(failure_page)
+        menu_requests = {"count": 0}
+
+        def flaky_menu(route) -> None:
+            menu_requests["count"] += 1
+            if menu_requests["count"] == 1:
+                route.abort()
+            else:
+                route.fulfill(json=empty_payload())
+
+        failure_page.route("**/admin/api/menu/demo", flaky_menu)
+        failure_page.goto(menu_url, wait_until="networkidle")
+        failure_page.locator("#empty-state", has_text="Menu data failed to load. Check connection and retry.").wait_for(timeout=5000)
+        failure_page.screenshot(path=screenshot_dir / "phase62-admin-menu-load-error.png", full_page=True)
+        assert_true(failure_page.locator("#save-btn").is_disabled(), "admin menu save remains enabled after initial load failure", issues)
+        assert_true(failure_page.locator("#category-save-btn").is_disabled(), "category save remains enabled after initial load failure", issues)
+        assert_true(failure_page.locator("#empty-state button", has_text="Retry").is_visible(), "admin menu load error retry button is missing", issues)
+        failure_page.locator("#empty-state button", has_text="Retry").click()
+        failure_page.locator("#empty-state", has_text="No dishes yet. Add a dish after creating a category.").wait_for(timeout=5000)
+        assert_true(not failure_page_errors, f"initial load failure leaked page errors: {failure_page_errors}", issues)
+        assert_true(
+            failure_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+            "admin menu load failure has mobile horizontal overflow",
+            issues,
+        )
+        failure_context.close()
+
+        action_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        action_page = action_context.new_page()
+        action_page_errors: list[str] = []
+        action_page.on("pageerror", lambda exc: action_page_errors.append(str(exc)))
+        install_login(action_page)
+        action_payload = {
+            "tenant": {"name": "Admin Smoke", "slug": "demo"},
+            "categories": [{"id": 11, "title": "Smoke category", "sort_order": 0}],
+            "items": [],
+        }
+        action_page.route("**/admin/api/menu/demo", lambda route: route.abort() if route.request.method == "POST" else route.fulfill(json=action_payload))
+        action_page.goto(menu_url, wait_until="networkidle")
+        action_page.locator("#item-name").fill("Smoke dish")
+        action_page.locator("#item-price").fill("12000")
+        action_page.locator("#save-btn").click()
+        action_page.locator("#form-status", has_text="Create failed. Check connection and retry.").wait_for(timeout=5000)
+        action_page.screenshot(path=screenshot_dir / "phase62-admin-action-network-error.png", full_page=True)
+        assert_true(not action_page_errors, f"action failure leaked page errors: {action_page_errors}", issues)
+        assert_true(
+            action_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+            "admin action failure has mobile horizontal overflow",
+            issues,
+        )
+        action_context.close()
+
+        denied_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        denied_menu = denied_context.new_page()
+        denied_menu.route("**/admin/api/menu/demo", lambda route: route.fulfill(status=401, json={"detail": "Unauthorized"}))
+        denied_menu.goto(f"{base_url}/admin/menu/demo", wait_until="networkidle")
+        denied_menu.locator("#global-status", has_text=guidance).wait_for(timeout=5000)
+        denied_menu.screenshot(path=screenshot_dir / "phase62-admin-menu-no-session.png", full_page=True)
+        assert_true(denied_menu.locator("#save-btn").is_disabled(), "admin menu no-session leaves save enabled", issues)
+
+        denied_dashboard = denied_context.new_page()
+        denied_dashboard.route("**/t/demo/tenant", lambda route: route.fulfill(json=UNBRANDED_TENANT))
+        denied_dashboard.route("**/t/demo/api/admin/analytics**", lambda route: route.fulfill(status=401, json={"detail": "Unauthorized"}))
+        denied_dashboard.route("**/t/demo/api/admin/promotions", lambda route: route.fulfill(status=401, json={"detail": "Unauthorized"}))
+        denied_dashboard.goto(f"{base_url}/t/demo/admin", wait_until="networkidle")
+        denied_dashboard.locator("#analytics-status", has_text=guidance).wait_for(timeout=5000)
+        denied_dashboard.screenshot(path=screenshot_dir / "phase62-admin-dashboard-no-session.png", full_page=True)
+        assert_true(denied_dashboard.locator("#branding-status").inner_text(timeout=3000) == guidance, "dashboard branding does not show access guidance after denied admin sections", issues)
+        denied_context.close()
+
+        branding_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        branding_page = branding_context.new_page()
+        install_login(branding_page)
+        branding_profile = dict(UNBRANDED_TENANT)
+        branding_profile["plan"] = "standard"
+        branding_profile["features"] = {"plan": "standard"}
+        branding_page.route("**/t/demo/tenant", lambda route: route.fulfill(json=branding_profile))
+        branding_page.route("**/t/demo/api/admin/analytics**", lambda route: route.fulfill(json={"orders": 0, "revenue": 0, "average_check": 0, "top_items": []}))
+        branding_page.route("**/t/demo/api/admin/promotions", lambda route: route.fulfill(json={"items": []}))
+
+        def save_branding(route) -> None:
+            branding_profile.update(route.request.post_data_json)
+            route.fulfill(json=branding_profile)
+
+        branding_page.route("**/t/demo/api/admin/tenant", save_branding)
+        branding_page.goto(admin_url, wait_until="networkidle")
+        branding_page.locator("#brand-use-default-colors").uncheck()
+        branding_page.locator("#brand-primary").fill("#0f766e")
+        branding_page.locator("#brand-accent").fill("#f97316")
+        branding_page.locator("#branding-form button[type='submit']").click()
+        branding_page.locator("#branding-status", has_text="Branding saqlandi.").wait_for(timeout=5000)
+        branding_page.wait_for_timeout(300)
+        branding_page.screenshot(path=screenshot_dir / "phase62-admin-branding-success.png", full_page=True)
+        assert_true(branding_page.locator("#branding-status").inner_text(timeout=3000) == "Branding saqlandi.", "branding success message was cleared after reload", issues)
+        assert_true(
+            branding_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+            "admin dashboard has mobile horizontal overflow",
+            issues,
+        )
+        branding_context.close()
+
+        stale_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        stale_page = stale_context.new_page()
+        install_login(stale_page)
+        state = {
+            "categories": [],
+            "items": [],
+            "next_category_id": 31,
+            "next_item_id": 41,
+        }
+
+        def state_payload() -> dict:
+            return {"tenant": {"name": "Admin Smoke", "slug": "demo"}, "categories": state["categories"], "items": state["items"]}
+
+        def category_route(route) -> None:
+            data = route.request.post_data_json
+            category = {"id": state["next_category_id"], "title": data.get("title", ""), "sort_order": len(state["categories"])}
+            state["next_category_id"] += 1
+            state["categories"].append(category)
+            route.fulfill(json=category)
+
+        def menu_collection_route(route) -> None:
+            if route.request.method == "GET":
+                route.fulfill(json=state_payload())
+                return
+            data = route.request.post_data_json
+            item = {
+                "id": state["next_item_id"],
+                "name": data.get("name", ""),
+                "price": data.get("price", 0),
+                "category_id": data.get("category_id"),
+                "description": data.get("description"),
+                "image_path": data.get("image_path"),
+                "image": data.get("image_path"),
+            }
+            state["next_item_id"] += 1
+            state["items"].append(item)
+            route.fulfill(json=item)
+
+        def menu_item_route(route) -> None:
+            item_id = int(route.request.url.rstrip("/").split("/")[-1])
+            state["items"] = [item for item in state["items"] if int(item["id"]) != item_id]
+            route.fulfill(json={"ok": True})
+
+        stale_page.route("**/t/demo/categories", category_route)
+        stale_page.route("**/admin/api/menu/demo", menu_collection_route)
+        stale_page.route("**/admin/api/menu/demo/*", menu_item_route)
+        stale_page.goto(menu_url, wait_until="networkidle")
+        stale_page.locator("#category-name").fill("Smoke category")
+        stale_page.locator("#category-save-btn").click()
+        stale_page.locator("#category-status", has_text="Category created.").wait_for(timeout=5000)
+        stale_page.locator("#item-name").fill("Smoke dish")
+        stale_page.locator("#item-price").fill("19000")
+        stale_page.locator("#save-btn").click()
+        stale_page.locator("#global-status", has_text="Item created.").wait_for(timeout=5000)
+        stale_page.once("dialog", lambda dialog: dialog.accept())
+        stale_page.locator("button.danger-btn", has_text="Delete").last.click()
+        stale_page.locator("#global-status", has_text="Item deleted.").wait_for(timeout=5000)
+        stale_page.screenshot(path=screenshot_dir / "phase62-admin-stale-status-clear.png", full_page=True)
+        assert_true(stale_page.locator("#category-status").inner_text(timeout=3000) == "", "stale category status remains after item delete", issues)
+        assert_true(
+            stale_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+            "admin stale-status flow has mobile horizontal overflow",
+            issues,
+        )
+        stale_context.close()
+
+        print(
+            json.dumps(
+                {
+                    "url": url,
+                    "mode": "admin-flow",
+                    "screenshots": [str(p) for p in sorted(screenshot_dir.glob("phase62-admin-*.png"))],
+                    "issues": issues,
+                },
+                indent=2,
+            )
+        )
+        browser.close()
+
+    return issues
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run public menu UX smoke checks with Playwright Chromium.")
     parser.add_argument("--url", default=DEFAULT_URL)
@@ -744,11 +948,14 @@ def main() -> int:
     parser.add_argument("--loading-error", action="store_true", help="Run loading and error UX checks.")
     parser.add_argument("--branding", action="store_true", help="Run tenant branding checks.")
     parser.add_argument("--order-flow", action="store_true", help="Run checkout order-flow UX checks.")
+    parser.add_argument("--admin-flow", action="store_true", help="Run admin resilience UX checks.")
     args = parser.parse_args()
 
     try:
         if args.branding:
             issues = run_branding_smoke(args.url, args.screenshots)
+        elif args.admin_flow:
+            issues = run_admin_flow_smoke(args.url, args.screenshots)
         elif args.order_flow:
             issues = run_order_flow_smoke(args.url, args.screenshots)
         elif args.loading_error:

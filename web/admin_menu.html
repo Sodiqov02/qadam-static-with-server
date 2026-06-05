@@ -154,11 +154,13 @@
     const formHeading = document.getElementById("form-heading");
     const analyticsLink = document.getElementById("analytics-link");
     const publicLink = document.getElementById("public-link");
-    const accessDeniedMessage = "Access denied.";
+    const accessDeniedMessage = "Access denied. Open the admin link from Telegram again or request a new admin login link.";
+    const menuLoadErrorMessage = "Menu data failed to load. Check connection and retry.";
 
     let categories = [];
     let items = [];
     let editingId = null;
+    let menuDataLoaded = false;
 
     function replaceUrlWithoutAdminToken() {
       const url = new URL(window.location.href);
@@ -191,6 +193,99 @@
       formStatus.textContent = message || "";
     }
 
+    function safeErrorDetail(value) {
+      let detail = "";
+      if (typeof value === "string") {
+        detail = value;
+      } else if (value && typeof value === "object") {
+        detail = value.detail || value.message || value.error || "";
+      }
+      detail = String(detail || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+      if (!detail || /traceback|stack trace|exception|sqlalchemy|sqlite|\.py:\d+/i.test(detail)) {
+        return "";
+      }
+      return detail.slice(0, 140);
+    }
+
+    async function responseErrorMessage(response, fallback) {
+      let detail = "";
+      try {
+        const contentType = response.headers.get("content-type") || "";
+        detail = contentType.includes("application/json")
+          ? safeErrorDetail(await response.json())
+          : safeErrorDetail(await response.text());
+      } catch (_) {
+        detail = "";
+      }
+      return detail ? `${fallback} ${detail}` : fallback;
+    }
+
+    async function safeFetch(url, options, fallback) {
+      try {
+        const response = await fetch(url, options);
+        if (response.status === 401 || response.status === 403) {
+          showAccessDenied();
+          const error = new Error(accessDeniedMessage);
+          error.isAccessDenied = true;
+          throw error;
+        }
+        if (!response.ok) {
+          throw new Error(await responseErrorMessage(response, fallback));
+        }
+        return response;
+      } catch (error) {
+        if (error && error.message && error.message !== "Failed to fetch") {
+          throw error;
+        }
+        throw new Error(`${fallback} Check connection and retry.`);
+      }
+    }
+
+    function setControlsEnabled(enabled) {
+      const active = Boolean(enabled);
+      categoryNameInput.disabled = !active;
+      document.getElementById("category-save-btn").disabled = !active;
+      refreshBtn.disabled = false;
+      uploadTrigger.disabled = !active;
+      resetBtn.disabled = !active;
+      if (!active) {
+        saveBtn.disabled = true;
+        itemCategory.disabled = true;
+      } else {
+        fillCategoryOptions();
+      }
+    }
+
+    function clearActionStatuses() {
+      setCategoryStatus("");
+      setFormStatus("");
+    }
+
+    function renderMenuLoadError(message = menuLoadErrorMessage) {
+      menuDataLoaded = false;
+      categories = [];
+      items = [];
+      categoryList.innerHTML = "";
+      menuItemsBody.innerHTML = "";
+      categoryMeta.textContent = "0 categories";
+      tableMeta.textContent = "0 items";
+      pageSubtitle.textContent = "Could not load menu data.";
+      clearActionStatuses();
+      setGlobalStatus(message);
+      setControlsEnabled(false);
+      emptyState.hidden = false;
+      emptyState.innerHTML = "";
+      const copy = document.createElement("p");
+      copy.textContent = message;
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "secondary-btn";
+      retry.textContent = "Retry";
+      retry.addEventListener("click", loadMenuAdmin);
+      emptyState.appendChild(copy);
+      emptyState.appendChild(retry);
+    }
+
     function showAccessDenied(message = accessDeniedMessage) {
       setGlobalStatus(message);
       setCategoryStatus(message);
@@ -201,8 +296,7 @@
       categoryMeta.textContent = "0 categories";
       emptyState.hidden = false;
       emptyState.textContent = message;
-      saveBtn.disabled = true;
-      itemCategory.disabled = true;
+      setControlsEnabled(false);
     }
 
     async function bootstrapAdminAuth() {
@@ -286,51 +380,30 @@
     }
 
     async function apiCreateCategory(title) {
-      const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories`, {
+      const response = await safeFetch(`/t/${encodeURIComponent(tenantSlug)}/categories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ title }),
-      });
-      if (response.status === 401 || response.status === 403) {
-        showAccessDenied();
-      }
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Category create failed.");
-      }
+      }, "Category create failed.");
       return response.json();
     }
 
     async function apiUpdateCategory(categoryId, payload) {
-      const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
+      const response = await safeFetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(payload),
-      });
-      if (response.status === 401 || response.status === 403) {
-        showAccessDenied();
-      }
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Category update failed.");
-      }
+      }, "Category update failed.");
       return response.json();
     }
 
     async function apiDeleteCategory(categoryId) {
-      const response = await fetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
+      const response = await safeFetch(`/t/${encodeURIComponent(tenantSlug)}/categories/${categoryId}`, {
         method: "DELETE",
         credentials: "include",
-      });
-      if (response.status === 401 || response.status === 403) {
-        showAccessDenied();
-      }
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Category delete failed.");
-      }
+      }, "Category delete failed.");
       return response.json();
     }
 
@@ -355,7 +428,7 @@
       categoryMeta.textContent = `${categories.length} categories`;
 
       if (!categories.length) {
-        categoryList.innerHTML = '<div class="empty-state compact">No categories yet.</div>';
+        categoryList.innerHTML = '<div class="empty-state compact">No categories yet. Create a category first.</div>';
         return;
       }
 
@@ -462,6 +535,7 @@
       emptyState.hidden = items.length > 0;
 
       if (!items.length) {
+        emptyState.textContent = "No dishes yet. Add a dish after creating a category.";
         return;
       }
 
@@ -550,23 +624,22 @@
               return;
             }
             setGlobalStatus("");
-            const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
-              method: "DELETE",
-              credentials: "include",
-            });
-            if (response.status === 401 || response.status === 403) {
-              showAccessDenied();
-              return;
+            try {
+              await safeFetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}/${item.id}`, {
+                method: "DELETE",
+                credentials: "include",
+              }, "Delete failed.");
+              if (editingId === item.id) {
+                resetForm();
+              }
+              clearActionStatuses();
+              await loadMenuAdmin();
+              setGlobalStatus("Item deleted.");
+            } catch (error) {
+              if (!error.isAccessDenied) {
+                setGlobalStatus(error.message || "Delete failed. Check connection and retry.");
+              }
             }
-            if (!response.ok) {
-              setGlobalStatus("Delete failed.");
-              return;
-            }
-            if (editingId === item.id) {
-              resetForm();
-            }
-            await loadMenuAdmin();
-            setGlobalStatus("Item deleted.");
           });
 
           actions.appendChild(editBtn);
@@ -589,35 +662,36 @@
         return;
       }
 
-      const response = await fetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
-        credentials: "include",
-      });
-      if (response.status === 401 || response.status === 403) {
-        showAccessDenied();
-        return;
-      }
-      if (!response.ok) {
-        setGlobalStatus("Menu admin data could not be loaded.");
-        return;
-      }
-
-      const data = await response.json();
-      categories = sortCategories(data.categories || []);
-      items = [...(data.items || [])].sort((left, right) => {
-        if (Number(left.category_id || 0) !== Number(right.category_id || 0)) {
-          return Number(left.category_id || 0) - Number(right.category_id || 0);
-        }
-        return Number(left.id || 0) - Number(right.id || 0);
-      });
-      pageTitle.textContent = `${data.tenant?.name || tenantSlug} menu`;
-      pageSubtitle.textContent = `Tenant slug: ${data.tenant?.slug || tenantSlug}`;
-      fillCategoryOptions();
-      renderCategories();
-      renderItems();
-      if (!categories.length) {
-        setGlobalStatus("No categories found for this tenant.");
-      } else {
+      try {
+        clearActionStatuses();
         setGlobalStatus("");
+        const response = await safeFetch(`/admin/api/menu/${encodeURIComponent(tenantSlug)}`, {
+          credentials: "include",
+        }, menuLoadErrorMessage);
+        const data = await response.json();
+        menuDataLoaded = true;
+        categories = sortCategories(data.categories || []);
+        items = [...(data.items || [])].sort((left, right) => {
+          if (Number(left.category_id || 0) !== Number(right.category_id || 0)) {
+            return Number(left.category_id || 0) - Number(right.category_id || 0);
+          }
+          return Number(left.id || 0) - Number(right.id || 0);
+        });
+        pageTitle.textContent = `${data.tenant?.name || tenantSlug} menu`;
+        pageSubtitle.textContent = `Tenant slug: ${data.tenant?.slug || tenantSlug}`;
+        fillCategoryOptions();
+        renderCategories();
+        renderItems();
+        setControlsEnabled(true);
+        if (!categories.length) {
+          setGlobalStatus("No categories found for this tenant.");
+        } else {
+          setGlobalStatus("");
+        }
+      } catch (error) {
+        if (!error.isAccessDenied) {
+          renderMenuLoadError(error.message || menuLoadErrorMessage);
+        }
       }
     }
 
@@ -627,30 +701,28 @@
       setFormStatus("Uploading image...");
       uploadLabel.textContent = file.name;
 
-      const response = await fetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
+      try {
+        const response = await safeFetch(`/admin/upload-image/${encodeURIComponent(tenantSlug)}`, {
         method: "POST",
         credentials: "include",
         body: formData,
-      });
-      if (response.status === 401 || response.status === 403) {
-        showAccessDenied();
-        return;
-      }
-      if (!response.ok) {
-        setFormStatus("Image upload failed.");
+        }, "Image upload failed.");
+        const data = await response.json();
+        itemImagePath.value = data.image_path || "";
+        setPreview(data.image || "");
+        uploadLabel.textContent = data.image_path || file.name;
+        setFormStatus("Image uploaded.");
+      } catch (error) {
+        setFormStatus(error.message || "Image upload failed. Check connection and retry.");
         uploadLabel.textContent = "No file selected";
-        return;
       }
-      const data = await response.json();
-      itemImagePath.value = data.image_path || "";
-      setPreview(data.image || "");
-      uploadLabel.textContent = data.image_path || file.name;
-      setFormStatus("Image uploaded.");
     }
 
     categoryForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      setGlobalStatus("");
       setCategoryStatus("");
+      setFormStatus("");
       const title = (categoryNameInput.value || "").trim();
       if (!title) {
         setCategoryStatus("Category name is required.");
@@ -668,7 +740,12 @@
 
     menuForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      setFormStatus("");
+      setGlobalStatus("");
+      clearActionStatuses();
+      if (!menuDataLoaded) {
+        setFormStatus(`${menuLoadErrorMessage}`);
+        return;
+      }
       if (!categories.length) {
         setFormStatus("Create at least one category first.");
         return;
@@ -689,24 +766,19 @@
         : `/admin/api/menu/${encodeURIComponent(tenantSlug)}`;
       const method = isUpdate ? "PUT" : "POST";
 
-      const response = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(payload),
-      });
-      if (response.status === 401 || response.status === 403) {
-        showAccessDenied();
-        return;
+      try {
+        await safeFetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify(payload),
+        }, isUpdate ? "Update failed." : "Create failed.");
+        await loadMenuAdmin();
+        resetForm();
+        setGlobalStatus(isUpdate ? "Item updated." : "Item created.");
+      } catch (error) {
+        setFormStatus(error.message || (isUpdate ? "Update failed. Check connection and retry." : "Create failed. Check connection and retry."));
       }
-      if (!response.ok) {
-        setFormStatus(isUpdate ? "Update failed." : "Create failed.");
-        return;
-      }
-
-      await loadMenuAdmin();
-      resetForm();
-      setGlobalStatus(isUpdate ? "Item updated." : "Item created.");
     });
 
     uploadTrigger.addEventListener("click", () => uploadInput.click());
