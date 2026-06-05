@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
+
+load_dotenv()
 
 DEFAULT_URL = "http://127.0.0.1:8000/t/demo"
 DEFAULT_SCREENSHOT_DIR = Path("screenshots/ux-stabilization")
@@ -945,7 +949,7 @@ def run_onboarding_smoke(url: str, screenshot_dir: Path) -> list[str]:
     issues: list[str] = []
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     base_url = url.split("/t/")[0].rstrip("/")
-    operator_token = "change_me"
+    operator_token = os.getenv("ADMIN_SECRET") or "dev_only_admin_secret"
     slug = f"smoke-onboarding-{uuid.uuid4().hex[:8]}"
 
     with sync_playwright() as p:

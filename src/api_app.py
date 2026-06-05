@@ -97,6 +97,11 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 app.mount("/menu-images", StaticFiles(directory=str(MENU_IMAGES_DIR)), name="menu-images")
 
 
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
 class ReservationIn(BaseModel):
     name: str
     phone: str

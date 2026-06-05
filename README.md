@@ -16,6 +16,29 @@ Use `.env` (see `.env.example`):
 - `DATABASE_URL`
 - `API_BASE_URL`
 - `PORT`
+- `ADMIN_SECRET`
+- `UPLOADS_DIR`
+- `MENU_IMAGES_DIR`
+
+`ADMIN_SECRET` protects internal operator/admin routes. Set it to a strong random value in production and never commit it.
+
+## Railway Production Notes
+Required Railway resources:
+- web process: `uvicorn run_server:app --host 0.0.0.0 --port $PORT`
+- worker process: `python run_bot.py`
+- PostgreSQL database
+- persistent upload storage: Railway Volume mounted at `/data` or an S3-compatible replacement before relying on image uploads
+
+Required production env vars:
+- `DATABASE_URL`: Railway PostgreSQL connection string
+- `ADMIN_SECRET`: strong random operator/admin secret
+- `API_BASE_URL`: public HTTPS base URL, for example `https://qadam.example.com`
+- `UPLOADS_DIR`: persistent hero/logo upload directory, for example `/data/uploads`
+- `MENU_IMAGES_DIR`: persistent menu image directory, for example `/data/menu_images`
+- `PORT`: provided by Railway for the web process
+
+Health check:
+- `GET /healthz` returns `{"status":"ok"}` without exposing secrets or tenant data.
 
 ## Run
 1. Install dependencies:
@@ -37,4 +60,3 @@ What it does:
 - writes bot config fields (`bot_token`, `bot_username`, `bot_enabled`)
 - sets admin chat id
 - creates initial empty categories (idempotent by title)
-
