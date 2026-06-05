@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Operator Onboarding | Qadam</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="page single">
+    <main class="content">
+      <header class="content-head">
+        <div>
+          <p class="eyebrow">Operator</p>
+          <h2>Restaurant onboarding</h2>
+          <p class="muted">Create a tenant and hand off first admin links.</p>
+        </div>
+        <a class="ghost-btn button-link" href="/">Public home</a>
+      </header>
+
+      <section class="orders-panel" id="operator-login-panel">
+        <form id="operator-login-form" class="form">
+          <div class="field">
+            <label for="operator-secret">Operator Secret</label>
+            <input id="operator-secret" type="password" autocomplete="off" required />
+          </div>
+          <button type="submit" id="operator-login-btn">Unlock onboarding</button>
+          <p id="operator-login-status" class="muted status"></p>
+        </form>
+      </section>
+
+      <section class="orders-panel">
+        <form id="onboarding-form" class="form" hidden>
+          <div class="grid-two">
+            <div class="field">
+              <label for="restaurant-name">Restaurant name</label>
+              <input id="restaurant-name" name="name" required placeholder="Qadam Demo" />
+            </div>
+            <div class="field">
+              <label for="tenant-slug">Slug</label>
+              <input id="tenant-slug" name="slug" required placeholder="qadam-demo" />
+              <p id="slug-status" class="muted status"></p>
+            </div>
+          </div>
+
+          <div class="grid-two">
+            <div class="field">
+              <label for="admin-chat-id">Admin chat ID</label>
+              <input id="admin-chat-id" name="admin_chat_id" required inputmode="numeric" placeholder="6997959356" />
+            </div>
+            <div class="field">
+              <label for="tenant-plan">Plan</label>
+              <select id="tenant-plan" name="plan">
+                <option value="standard">standard</option>
+                <option value="basic">basic</option>
+                <option value="vip">vip</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid-two">
+            <div class="field">
+              <label for="bot-username">Bot username</label>
+              <input id="bot-username" name="bot_username" placeholder="deliveringbotliqibot" />
+            </div>
+            <div class="field">
+              <label for="bot-token">Bot token</label>
+              <input id="bot-token" name="bot_token" type="password" autocomplete="off" placeholder="Paste token only when enabling bot" />
+            </div>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="enable-bot" name="enable_bot" type="checkbox" />
+            <span>Enable bot polling for this tenant</span>
+          </label>
+
+          <div class="field">
+            <label for="initial-categories">Initial categories</label>
+            <textarea id="initial-categories" name="initial_categories" placeholder="Main&#10;Drinks"></textarea>
+          </div>
+
+          <button type="submit" id="create-tenant-btn">Create tenant</button>
+          <p id="onboarding-status" class="muted status"></p>
+        </form>
+      </section>
+
+      <section class="orders-panel" id="result-panel" hidden>
+        <header class="content-head">
+          <div>
+            <p class="eyebrow">Result</p>
+            <h2>Tenant ready</h2>
+          </div>
+        </header>
+        <div class="orders-list" id="result-links"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const loginPanel = document.getElementById("operator-login-panel");
+    const loginForm = document.getElementById("operator-login-form");
+    const loginStatus = document.getElementById("operator-login-status");
+    const loginBtn = document.getElementById("operator-login-btn");
+    const form = document.getElementById("onboarding-form");
+    const slugInput = document.getElementById("tenant-slug");
+    const slugStatus = document.getElementById("slug-status");
+    const statusEl = document.getElementById("onboarding-status");
+    const resultPanel = document.getElementById("result-panel");
+    const resultLinks = document.getElementById("result-links");
+    const submitBtn = document.getElementById("create-tenant-btn");
+    let slugTimer = 0;
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message || "";
+      statusEl.classList.toggle("is-error", Boolean(isError));
+      statusEl.classList.toggle("is-success", Boolean(message && !isError));
+    }
+
+    function setLoginStatus(message, isError = false) {
+      loginStatus.textContent = message || "";
+      loginStatus.classList.toggle("is-error", Boolean(isError));
+      loginStatus.classList.toggle("is-success", Boolean(message && !isError));
+    }
+
+    async function apiError(res, fallback) {
+      let detail = "";
+      try {
+        const data = await res.json();
+        detail = data.detail || data.message || "";
+      } catch (_) {
+        detail = "";
+      }
+      return detail || fallback;
+    }
+
+    async function checkSlug() {
+      const slug = slugInput.value.trim();
+      slugStatus.textContent = "";
+      if (!slug) {
+        return;
+      }
+      try {
+        const res = await fetch(`/api/onboarding/slug-check?slug=${encodeURIComponent(slug)}`, {
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          slugStatus.textContent = await apiError(res, "Slug check failed.");
+          return;
+        }
+        const data = await res.json();
+        slugInput.value = data.normalized_slug || slug;
+        slugStatus.textContent = data.available ? "Slug is available." : data.reason || "Slug is unavailable.";
+        slugStatus.classList.toggle("is-success", Boolean(data.available));
+        slugStatus.classList.toggle("is-error", !data.available);
+      } catch (_) {
+        slugStatus.textContent = "Slug check failed. Check connection and retry.";
+        slugStatus.classList.add("is-error");
+      }
+    }
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setLoginStatus("");
+      loginBtn.disabled = true;
+      loginBtn.textContent = "Checking...";
+      try {
+        const res = await fetch("/api/onboarding/operator-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ secret: document.getElementById("operator-secret").value }),
+        });
+        if (!res.ok) {
+          setLoginStatus("Access denied.", true);
+          return;
+        }
+        document.getElementById("operator-secret").value = "";
+        setLoginStatus("Operator session active.");
+        loginPanel.hidden = true;
+        form.hidden = false;
+        document.getElementById("restaurant-name").focus();
+      } catch (_) {
+        setLoginStatus("Login failed. Check connection and retry.", true);
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = "Unlock onboarding";
+      }
+    });
+
+    function copyButton(value) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "secondary-btn";
+      btn.textContent = "Copy";
+      btn.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(value);
+        btn.textContent = "Copied";
+        window.setTimeout(() => {
+          btn.textContent = "Copy";
+        }, 1200);
+      });
+      return btn;
+    }
+
+    function renderResult(data) {
+      resultLinks.innerHTML = "";
+      const rows = [
+        ["Public menu", data.public_menu_url],
+        ["Admin menu one-time link", data.admin_menu_url],
+        ["Admin dashboard one-time link", data.admin_dashboard_url],
+        ["Bot", data.bot_url || (data.bot_enabled ? "Enabled" : "Not enabled")],
+      ];
+      rows.forEach(([label, value]) => {
+        const card = document.createElement("div");
+        card.className = "orders-card";
+        const head = document.createElement("div");
+        head.className = "orders-card-head";
+        const text = document.createElement("div");
+        text.innerHTML = `<strong>${label}</strong><div class="muted">${value || "-"}</div>`;
+        head.appendChild(text);
+        if (value && /^https?:\/\//.test(value)) {
+          const link = document.createElement("a");
+          link.className = "ghost-btn button-link";
+          link.href = value;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = "Open";
+          head.appendChild(link);
+        }
+        card.appendChild(head);
+        if (value) {
+          const foot = document.createElement("div");
+          foot.className = "orders-card-foot";
+          foot.appendChild(document.createElement("div"));
+          foot.appendChild(copyButton(value));
+          card.appendChild(foot);
+        }
+        resultLinks.appendChild(card);
+      });
+      resultPanel.hidden = false;
+    }
+
+    slugInput.addEventListener("input", () => {
+      window.clearTimeout(slugTimer);
+      slugTimer = window.setTimeout(checkSlug, 350);
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      setStatus("");
+      resultPanel.hidden = true;
+      const categories = document
+        .getElementById("initial-categories")
+        .value.split(/\r?\n|,/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const payload = {
+        slug: slugInput.value.trim(),
+        name: document.getElementById("restaurant-name").value.trim(),
+        admin_chat_id: Number(document.getElementById("admin-chat-id").value),
+        plan: document.getElementById("tenant-plan").value,
+        bot_username: document.getElementById("bot-username").value.trim() || null,
+        bot_token: document.getElementById("bot-token").value.trim() || null,
+        enable_bot: document.getElementById("enable-bot").checked,
+        initial_categories: categories,
+      };
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating...";
+      try {
+        const res = await fetch("/api/onboarding/tenants", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          setStatus(await apiError(res, "Tenant could not be created."), true);
+          return;
+        }
+        const data = await res.json();
+        document.getElementById("bot-token").value = "";
+        setStatus("Tenant created. Share the one-time admin link with the owner.");
+        renderResult(data);
+      } catch (_) {
+        setStatus("Tenant could not be created. Check connection and retry.", true);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create tenant";
+      }
+    });
+  </script>
+</body>
+</html>

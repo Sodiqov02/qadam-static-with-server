@@ -906,6 +906,40 @@ textarea { resize: vertical; min-height: 70px; }
   margin-top: 0;
   padding: 14px;
 }
+.first-run-panel {
+  margin-bottom: 14px;
+}
+.first-run-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.first-run-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.first-run-list li.is-done {
+  color: #047857;
+}
+.check-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 22px;
+  background: #eef2ff;
+  color: #334155;
+  font-weight: 800;
+}
+.first-run-list li.is-done .check-mark {
+  background: var(--pill-green);
+  color: #047857;
+}
 .cart-toast {
   position: fixed;
   right: 20px;

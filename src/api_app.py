@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import datetime, time
 import logging
 import os
+import re
+import secrets
 import shutil
 import uuid
 from typing import Literal
@@ -29,7 +31,9 @@ from src.store import (
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
+    bootstrap_tenant,
     create_admin_session,
+    create_admin_login_token_for_tenant,
     create_category_for_tenant,
     create_menu_item_for_tenant,
     create_reorder_for_phone,
@@ -41,6 +45,7 @@ from src.store import (
     get_menu_admin_payload,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
+    get_tenant_by_slug,
     get_admin_session,
     list_categories_for_tenant,
     mark_admin_login_token_used,
@@ -68,6 +73,7 @@ INDEX_FILE = WEB_DIR / "index.html"
 MY_ORDERS_FILE = WEB_DIR / "my_orders.html"
 ADMIN_FILE = WEB_DIR / "admin.html"
 ADMIN_MENU_FILE = WEB_DIR / "admin_menu.html"
+ONBOARDING_FILE = WEB_DIR / "onboarding.html"
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "/data/uploads"))
 MENU_IMAGES_DIR = Path(os.getenv("MENU_IMAGES_DIR", "/data/menu_images"))
@@ -190,6 +196,21 @@ class AdminLoginRequest(BaseModel):
     slug: str | None = None
 
 
+class OperatorLoginRequest(BaseModel):
+    secret: str
+
+
+class OnboardingTenantRequest(BaseModel):
+    slug: str
+    name: str
+    admin_chat_id: int
+    plan: str
+    bot_token: str | None = None
+    bot_username: str | None = None
+    enable_bot: bool = False
+    initial_categories: list[str] | None = None
+
+
 @dataclass
 class AdminAuthContext:
     tenant_id: int | None
@@ -198,6 +219,83 @@ class AdminAuthContext:
 
 ADMIN_SESSION_COOKIE = "admin_session"
 ADMIN_SESSION_MAX_AGE = 7 * 24 * 60 * 60
+OPERATOR_SESSION_COOKIE = "operator_session"
+OPERATOR_SESSION_MAX_AGE = 12 * 60 * 60
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+PLACEHOLDER_TOKENS = {"<paste_token_locally>", "paste_token_locally", "<token>", "token", "your_token", "bot_token"}
+VALID_PLANS = {"basic", "standard", "vip"}
+BOT_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+
+
+def _normalize_slug(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    raw = re.sub(r"[^a-z0-9-]+", "-", raw)
+    raw = re.sub(r"-{2,}", "-", raw).strip("-")
+    return raw[:64]
+
+
+def _slug_check(value: str | None) -> dict:
+    normalized = _normalize_slug(value)
+    if not normalized:
+        return {"normalized_slug": normalized, "available": False, "reason": "Slug is required."}
+    if len(normalized) < 3:
+        return {"normalized_slug": normalized, "available": False, "reason": "Slug must be at least 3 characters."}
+    if not SLUG_RE.fullmatch(normalized):
+        return {"normalized_slug": normalized, "available": False, "reason": "Slug can use lowercase letters, numbers and hyphens."}
+    if get_tenant_by_slug(normalized):
+        return {"normalized_slug": normalized, "available": False, "reason": "Slug is already taken."}
+    return {"normalized_slug": normalized, "available": True, "reason": ""}
+
+
+def _is_placeholder_token(value: str | None) -> bool:
+    normalized = str(value or "").strip().lower()
+    return not normalized or normalized in PLACEHOLDER_TOKENS or normalized.startswith("<") or normalized.endswith(">")
+
+
+def require_operator(x_admin_token: str | None = Header(default=None)) -> None:
+    if x_admin_token != ADMIN_SECRET:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
+def _operator_session_value() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _set_operator_session_cookie(response: Response, session_value: str) -> None:
+    api_base_url = str(getattr(settings, "API_BASE_URL", "") or "").strip().lower()
+    secure_cookie = api_base_url.startswith("https://") or bool(os.getenv("RAILWAY_ENVIRONMENT"))
+    response.set_cookie(
+        key=OPERATOR_SESSION_COOKIE,
+        value=session_value,
+        max_age=OPERATOR_SESSION_MAX_AGE,
+        httponly=True,
+        samesite="Lax",
+        secure=secure_cookie,
+        path="/",
+    )
+
+
+def _onboarding_headers(response: Response) -> None:
+    response.headers["Referrer-Policy"] = "no-referrer"
+
+
+def require_operator_session(request: Request) -> None:
+    session_value = request.cookies.get(OPERATOR_SESSION_COOKIE)
+    expected = getattr(request.app.state, "operator_session", None)
+    if not session_value or not expected or not secrets.compare_digest(str(session_value), str(expected)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
+def _public_base_url() -> str:
+    base_url = str(getattr(settings, "API_BASE_URL", "") or "").strip().rstrip("/")
+    if base_url.endswith("/api"):
+        base_url = base_url[:-4]
+    return base_url
+
+
+def _absolute_or_path(path: str) -> str:
+    base_url = _public_base_url()
+    return f"{base_url}{path}" if base_url else path
 
 
 def _tenant_public(tenant):
@@ -428,6 +526,26 @@ def serve_admin_menu(tenant_slug: str):
     return FileResponse(ADMIN_MENU_FILE)
 
 
+@app.get("/admin/onboarding", include_in_schema=False)
+def serve_onboarding(response: Response):
+    if not ONBOARDING_FILE.exists():
+        raise HTTPException(404, "Onboarding page not found")
+    file_response = FileResponse(ONBOARDING_FILE)
+    file_response.headers["Referrer-Policy"] = "no-referrer"
+    return file_response
+
+
+@app.post("/api/onboarding/operator-login")
+def onboarding_operator_login(payload: OperatorLoginRequest, response: Response):
+    if not secrets.compare_digest(str(payload.secret or ""), str(ADMIN_SECRET)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+    session_value = _operator_session_value()
+    app.state.operator_session = session_value
+    _set_operator_session_cookie(response, session_value)
+    _onboarding_headers(response)
+    return {"ok": True}
+
+
 @app.get("/my-orders", include_in_schema=False)
 def serve_my_orders():
     if not MY_ORDERS_FILE.exists():
@@ -440,6 +558,91 @@ def serve_admin():
     if not ADMIN_FILE.exists():
         raise HTTPException(404, "Admin page not found")
     return FileResponse(ADMIN_FILE)
+
+
+@app.get("/api/onboarding/slug-check")
+def onboarding_slug_check(response: Response, slug: str, _: None = Depends(require_operator_session)):
+    _onboarding_headers(response)
+    return _slug_check(slug)
+
+
+@app.post("/api/onboarding/tenants")
+def onboarding_create_tenant(payload: OnboardingTenantRequest, response: Response, _: None = Depends(require_operator_session)):
+    _onboarding_headers(response)
+    slug_result = _slug_check(payload.slug)
+    normalized_slug = slug_result["normalized_slug"]
+    if not slug_result["available"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, slug_result["reason"])
+
+    name = str(payload.name or "").strip()
+    if not name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Restaurant name is required.")
+    if int(payload.admin_chat_id or 0) <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Admin chat ID must be a positive number.")
+
+    plan = str(payload.plan or "").strip().lower()
+    if plan not in VALID_PLANS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Plan must be one of: basic, standard, vip.")
+
+    bot_token = str(payload.bot_token or "").strip()
+    bot_username = str(payload.bot_username or "").strip().lstrip("@") or None
+    if bot_username and not BOT_USERNAME_RE.fullmatch(bot_username):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bot username is invalid.")
+    enable_bot = bool(payload.enable_bot)
+    if bot_token and _is_placeholder_token(bot_token):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bot token is a placeholder. Paste a real Telegram bot token or leave it empty.")
+    if enable_bot and not bot_token:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Bot token is required when bot is enabled.")
+
+    category_seen: set[str] = set()
+    categories: list[str] = []
+    for item in payload.initial_categories or []:
+        title = str(item or "").strip()
+        if not title:
+            continue
+        key = title.casefold()
+        if key in category_seen:
+            continue
+        category_seen.add(key)
+        categories.append(title)
+
+    result = bootstrap_tenant(
+        slug=normalized_slug,
+        name=name,
+        admin_chat_id=payload.admin_chat_id,
+        bot_token=bot_token or None,
+        bot_username=bot_username,
+        bot_enabled=enable_bot,
+        features={"plan": plan},
+        category_titles=categories,
+    )
+    tenant = get_tenant_by_slug(normalized_slug)
+    if tenant is None:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Tenant created but could not be loaded.")
+
+    menu_login_token = create_admin_login_token_for_tenant(tenant)
+    dashboard_login_token = create_admin_login_token_for_tenant(tenant)
+    admin_menu_path = f"/admin/menu/{quote(normalized_slug, safe='')}?admin_token={quote(menu_login_token.token, safe='')}"
+    admin_dashboard_path = f"/t/{quote(normalized_slug, safe='')}/admin?admin_token={quote(dashboard_login_token.token, safe='')}"
+    public_menu_path = f"/t/{quote(normalized_slug, safe='')}"
+
+    return {
+        "public_menu_url": _absolute_or_path(public_menu_path),
+        "admin_menu_url": _absolute_or_path(admin_menu_path),
+        "admin_dashboard_url": _absolute_or_path(admin_dashboard_path),
+        "bot_url": f"https://t.me/{bot_username}" if bot_username else None,
+        "bot_enabled": bool(tenant.bot_enabled),
+        "tenant": {
+            "id": tenant.id,
+            "slug": tenant.slug,
+            "name": tenant.name,
+            "admin_chat_id": tenant.admin_chat_id,
+            "bot_username": tenant.bot_username,
+            "plan": tenant_plan(tenant),
+            "created": bool(result.get("created")),
+            "categories_created": int(result.get("categories_created") or 0),
+        },
+    }
 
 
 @app.get("/t/{slug}/menu", response_model=Menu)

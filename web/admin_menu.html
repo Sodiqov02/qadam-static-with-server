@@ -23,6 +23,17 @@
 
       <p class="muted status" id="global-status"></p>
 
+      <section class="orders-panel first-run-panel" id="first-run-panel" hidden>
+        <div class="menu-table-toolbar">
+          <div>
+            <p class="eyebrow">First run</p>
+            <h3>Setup checklist</h3>
+          </div>
+          <a class="ghost-btn button-link" id="checklist-public-link" href="/" target="_blank" rel="noopener">Preview public menu</a>
+        </div>
+        <ul class="first-run-list" id="first-run-list"></ul>
+      </section>
+
       <section class="menu-admin-shell">
         <aside class="menu-admin-form-panel">
           <section class="orders-panel category-manager-panel">
@@ -154,6 +165,9 @@
     const formHeading = document.getElementById("form-heading");
     const analyticsLink = document.getElementById("analytics-link");
     const publicLink = document.getElementById("public-link");
+    const firstRunPanel = document.getElementById("first-run-panel");
+    const firstRunList = document.getElementById("first-run-list");
+    const checklistPublicLink = document.getElementById("checklist-public-link");
     const accessDeniedMessage = "Access denied. Open the admin link from Telegram again or request a new admin login link.";
     const menuLoadErrorMessage = "Menu data failed to load. Check connection and retry.";
 
@@ -656,6 +670,41 @@
       });
     }
 
+    function renderFirstRunChecklist() {
+      if (!firstRunPanel || !firstRunList) {
+        return;
+      }
+      const hasCategories = categories.length > 0;
+      const hasItems = items.length > 0;
+      const hasImage = items.some((item) => item.image || item.image_url || item.image_path);
+      const publicHref = tenantSlug ? `/t/${encodeURIComponent(tenantSlug)}` : "/";
+      const checks = [
+        { label: "Set branding", done: false },
+        { label: "Create category", done: hasCategories },
+        { label: "Create first dish", done: hasItems },
+        { label: "Upload dish image", done: hasImage },
+        { label: "Preview public menu", done: hasItems },
+        { label: "Place test order", done: false },
+      ];
+      firstRunPanel.hidden = hasCategories && hasItems && hasImage;
+      if (checklistPublicLink) {
+        checklistPublicLink.href = publicHref;
+      }
+      firstRunList.innerHTML = "";
+      checks.forEach((check) => {
+        const li = document.createElement("li");
+        li.className = check.done ? "is-done" : "";
+        const mark = document.createElement("span");
+        mark.className = "check-mark";
+        mark.textContent = check.done ? "✓" : "•";
+        const text = document.createElement("span");
+        text.textContent = check.label;
+        li.appendChild(mark);
+        li.appendChild(text);
+        firstRunList.appendChild(li);
+      });
+    }
+
     async function loadMenuAdmin() {
       if (!tenantSlug) {
         setGlobalStatus("Tenant slug missing in URL.");
@@ -682,6 +731,7 @@
         fillCategoryOptions();
         renderCategories();
         renderItems();
+        renderFirstRunChecklist();
         setControlsEnabled(true);
         if (!categories.length) {
           setGlobalStatus("No categories found for this tenant.");
@@ -799,6 +849,9 @@
       const suffix = params.toString() ? `?${params.toString()}` : "";
       analyticsLink.href = `/t/${encodeURIComponent(tenantSlug)}/admin${suffix}`;
       publicLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
+      if (checklistPublicLink) {
+        checklistPublicLink.href = `/t/${encodeURIComponent(tenantSlug)}`;
+      }
     }
 
     async function boot() {

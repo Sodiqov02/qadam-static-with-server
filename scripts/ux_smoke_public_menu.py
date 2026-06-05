@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from pathlib import Path
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
@@ -940,6 +941,176 @@ def run_admin_flow_smoke(url: str, screenshot_dir: Path) -> list[str]:
     return issues
 
 
+def run_onboarding_smoke(url: str, screenshot_dir: Path) -> list[str]:
+    issues: list[str] = []
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    base_url = url.split("/t/")[0].rstrip("/")
+    operator_token = "change_me"
+    slug = f"smoke-onboarding-{uuid.uuid4().hex[:8]}"
+
+    with sync_playwright() as p:
+        denied_request = p.request.new_context(base_url=base_url)
+        denied_slug = denied_request.get(f"/api/onboarding/slug-check?slug={slug}")
+        denied_create = denied_request.post(
+            "/api/onboarding/tenants",
+            data=json.dumps({"slug": slug, "name": "Denied", "admin_chat_id": 1, "plan": "standard"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert_true(denied_slug.status == 401, "slug check without operator auth should be denied", issues)
+        assert_true(denied_create.status == 401, "tenant create without operator auth should be denied", issues)
+        denied_request.dispose()
+
+        request = p.request.new_context(base_url=base_url)
+        login = request.post(
+            "/api/onboarding/operator-login",
+            data=json.dumps({"secret": operator_token}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert_true(login.ok, "operator login failed in onboarding smoke", issues)
+
+        available = request.get(f"/api/onboarding/slug-check?slug={slug}")
+        assert_true(available.ok, "slug check available request failed", issues)
+        available_data = available.json()
+        assert_true(available_data.get("normalized_slug") == slug, "slug check did not preserve normalized slug", issues)
+        assert_true(available_data.get("available") is True, "fresh onboarding slug should be available", issues)
+
+        reject = request.post(
+            "/api/onboarding/tenants",
+            data=json.dumps(
+                {
+                    "slug": f"{slug}-bot",
+                    "name": "Smoke Bot Reject",
+                    "admin_chat_id": 6997959356,
+                    "plan": "standard",
+                    "enable_bot": True,
+                    "initial_categories": ["Main"],
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        assert_true(reject.status == 400, "onboarding should reject enable_bot without token", issues)
+        assert_true("Bot token is required" in reject.text(), "enable_bot rejection is not user-friendly", issues)
+
+        invalid_chat = request.post(
+            "/api/onboarding/tenants",
+            data=json.dumps(
+                {
+                    "slug": f"{slug}-chat",
+                    "name": "Smoke Invalid Chat",
+                    "admin_chat_id": 0,
+                    "plan": "standard",
+                    "initial_categories": ["Main"],
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        assert_true(invalid_chat.status == 400, "invalid admin_chat_id should be rejected", issues)
+        assert_true("positive" in invalid_chat.text(), "invalid admin_chat_id rejection is not useful", issues)
+
+        placeholder = request.post(
+            "/api/onboarding/tenants",
+            data=json.dumps(
+                {
+                    "slug": f"{slug}-placeholder",
+                    "name": "Smoke Placeholder",
+                    "admin_chat_id": 6997959356,
+                    "plan": "standard",
+                    "bot_token": "<PASTE_TOKEN_LOCALLY>",
+                    "initial_categories": ["Main"],
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        assert_true(placeholder.status == 400, "placeholder bot token should be rejected", issues)
+        assert_true("placeholder" in placeholder.text().lower(), "placeholder token rejection is not useful", issues)
+
+        created = request.post(
+            "/api/onboarding/tenants",
+            data=json.dumps(
+                {
+                    "slug": slug,
+                    "name": "Smoke Onboarding",
+                    "admin_chat_id": 6997959356,
+                    "plan": "standard",
+                    "bot_username": "deliveringbotliqibot",
+                    "enable_bot": False,
+                    "initial_categories": ["Main", " Main ", "Drinks"],
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        assert_true(created.ok, f"onboarding create tenant failed: {created.text()}", issues)
+        data = created.json()
+        serialized = json.dumps(data)
+        assert_true("bot_token" not in serialized.lower(), "onboarding response exposes bot_token", issues)
+        assert_true(data.get("public_menu_url", "").endswith(f"/t/{slug}"), "public link should point to /t/{slug}", issues)
+        assert_true("/menu" not in data.get("public_menu_url", ""), "public link should not point to raw /menu endpoint", issues)
+        assert_true(data.get("admin_menu_url"), "admin menu one-time link missing", issues)
+        assert_true(data.get("admin_dashboard_url"), "admin dashboard one-time link missing", issues)
+        assert_true(data.get("bot_url") == "https://t.me/deliveringbotliqibot", "bot URL was not generated from username", issues)
+        assert_true(data.get("tenant", {}).get("categories_created") == 2, "initial categories were not de-duped and created cleanly", issues)
+
+        unavailable = request.get(f"/api/onboarding/slug-check?slug={slug}")
+        assert_true(unavailable.ok, "slug check unavailable request failed", issues)
+        assert_true(unavailable.json().get("available") is False, "created onboarding slug should be unavailable", issues)
+
+        public_page = request.get(f"/t/{slug}")
+        assert_true(public_page.ok, "generated public menu page does not load", issues)
+        public_menu = request.get(f"/t/{slug}/menu")
+        assert_true(public_menu.ok, "generated tenant menu API does not load", issues)
+        category_titles = [item.get("title") for item in public_menu.json().get("categories", [])]
+        assert_true(category_titles.count("Main") == 1 and "Drinks" in category_titles, "initial categories are missing or duplicated in public menu API", issues)
+        request.dispose()
+
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        page = context.new_page()
+        page.goto(f"{base_url}/admin/onboarding", wait_until="networkidle")
+        page.locator("#operator-login-form").wait_for(timeout=5000)
+        page.locator("#operator-secret").fill(operator_token)
+        page.locator("#operator-login-btn").click()
+        page.locator("#onboarding-form").wait_for(timeout=5000)
+        page.screenshot(path=screenshot_dir / "phase71-onboarding-form.png", full_page=True)
+        assert_true(page.locator("#bot-token").evaluate("(el) => el.type") == "password", "bot token input should be password", issues)
+
+        admin_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        admin_page = admin_context.new_page()
+        admin_page.goto(data["admin_menu_url"], wait_until="networkidle")
+        admin_page.locator("#first-run-panel").wait_for(timeout=8000)
+        admin_page.screenshot(path=screenshot_dir / "phase71-onboarding-admin-link.png", full_page=True)
+        assert_true(admin_page.locator("#first-run-panel").is_visible(), "first-run checklist is not visible for new tenant", issues)
+        assert_true(admin_page.locator("#category-meta").inner_text(timeout=3000) == "2 categories", "admin link did not load initial categories", issues)
+        assert_true(
+            admin_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+            "onboarding admin page has mobile horizontal overflow",
+            issues,
+        )
+        admin_context.close()
+
+        dashboard_context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        dashboard_page = dashboard_context.new_page()
+        dashboard_page.goto(data["admin_dashboard_url"], wait_until="networkidle")
+        dashboard_page.locator("#branding-form").wait_for(timeout=8000)
+        assert_true(dashboard_page.locator("#branding-status").inner_text(timeout=3000) == "", "admin dashboard link did not open cleanly", issues)
+        dashboard_context.close()
+        context.close()
+
+        print(
+            json.dumps(
+                {
+                    "url": url,
+                    "mode": "onboarding",
+                    "screenshots": [str(p) for p in sorted(screenshot_dir.glob("phase71-onboarding-*.png"))],
+                    "issues": issues,
+                },
+                indent=2,
+            )
+        )
+        browser.close()
+
+    return issues
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run public menu UX smoke checks with Playwright Chromium.")
     parser.add_argument("--url", default=DEFAULT_URL)
@@ -949,11 +1120,14 @@ def main() -> int:
     parser.add_argument("--branding", action="store_true", help="Run tenant branding checks.")
     parser.add_argument("--order-flow", action="store_true", help="Run checkout order-flow UX checks.")
     parser.add_argument("--admin-flow", action="store_true", help="Run admin resilience UX checks.")
+    parser.add_argument("--onboarding", action="store_true", help="Run assisted onboarding UX checks.")
     args = parser.parse_args()
 
     try:
         if args.branding:
             issues = run_branding_smoke(args.url, args.screenshots)
+        elif args.onboarding:
+            issues = run_onboarding_smoke(args.url, args.screenshots)
         elif args.admin_flow:
             issues = run_admin_flow_smoke(args.url, args.screenshots)
         elif args.order_flow:
