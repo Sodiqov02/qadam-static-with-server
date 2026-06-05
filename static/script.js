@@ -56,6 +56,8 @@
   let activeCategoryId = "all";
   let toastTimer = 0;
   let isCartLoading = false;
+  let cartNotice = null;
+  let isOrderSubmitting = false;
 
   function extractSlug() {
     const slug = window.location.pathname.split("/")[2] || "";
@@ -330,9 +332,29 @@
   }
 
   function setSubmitState(isLoading) {
-    submitBtn.disabled = isLoading;
-    submitBtn.classList.toggle("is-loading", isLoading);
-    submitBtn.textContent = isLoading ? "Yuborilmoqda..." : "Yuborish";
+    isOrderSubmitting = Boolean(isLoading);
+    submitBtn.disabled = isOrderSubmitting || cart.size === 0;
+    submitBtn.classList.toggle("is-loading", isOrderSubmitting);
+    submitBtn.textContent = isOrderSubmitting ? "Yuborilmoqda..." : "Yuborish";
+  }
+
+  function setCheckoutAvailability(hasItems) {
+    const available = Boolean(hasItems);
+    if (cartForm) {
+      cartForm.hidden = !available;
+      cartForm.setAttribute("aria-hidden", available ? "false" : "true");
+    }
+    Array.from(orderForm.elements).forEach((control) => {
+      if (control !== submitBtn) {
+        control.disabled = !available;
+      }
+    });
+    setSubmitState(isOrderSubmitting);
+  }
+
+  function setCartNotice(message, type) {
+    cartNotice = message ? { message, type: type || "" } : null;
+    renderCart();
   }
 
   function setCartLoading(isLoading) {
@@ -464,6 +486,7 @@
     menuCategories = [];
     activeCategoryId = "all";
     isCartLoading = false;
+    cartNotice = null;
     cart.clear();
     menuEl.innerHTML = "";
     if (menuFilters) {
@@ -512,6 +535,8 @@
     const current = cart.get(item.id) || { item, qty: 0 };
     current.qty += 1;
     cart.set(item.id, current);
+    cartNotice = null;
+    setStatus("");
     saveCartState();
     animateAddButton(triggerButton);
     showCartToast(`${item.name || "Taom"} savatga qo'shildi`);
@@ -535,6 +560,7 @@
 
   function clearCart() {
     cart.clear();
+    cartNotice = null;
     saveCartState();
     renderCart();
   }
@@ -556,16 +582,23 @@
     clearBtn.disabled = !items.length;
     if (!items.length) {
       cartEmpty.style.display = "block";
-      cartEmpty.textContent = isCartLoading
+      cartEmpty.classList.toggle("is-success", Boolean(cartNotice && cartNotice.type === "is-success"));
+      cartEmpty.classList.toggle("is-error", Boolean(cartNotice && cartNotice.type === "is-error"));
+      cartEmpty.textContent = cartNotice
+        ? cartNotice.message
+        : isCartLoading
         ? "Savat tiklanmoqda..."
         : "Savat hozircha bo'sh. Yoqtirgan taomingizni qo'shing.";
       cartTotal.textContent = formatPrice(0);
+      setCheckoutAvailability(false);
       if (scrollToFormFab) {
         scrollToFormFab.classList.remove("visible");
       }
       return;
     }
     cartEmpty.style.display = "none";
+    cartEmpty.classList.remove("is-success", "is-error");
+    setCheckoutAvailability(true);
     let total = 0;
     items.forEach(({ item, qty }) => {
       const li = document.createElement("li");
@@ -651,6 +684,36 @@
     });
     cartTotal.textContent = formatPrice(total);
     window.requestAnimationFrame(updateScrollFab);
+  }
+
+  function publicErrorDetail(value) {
+    let detail = "";
+    if (typeof value === "string") {
+      detail = value;
+    } else if (value && typeof value === "object") {
+      detail = value.detail || value.message || value.error || "";
+    }
+    detail = String(detail || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    if (!detail || /traceback|stack trace|exception|sqlalchemy|sqlite|\.py:\d+/i.test(detail)) {
+      return "";
+    }
+    return detail.slice(0, 120);
+  }
+
+  async function orderErrorMessage(res) {
+    let detail = "";
+    try {
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        detail = publicErrorDetail(await res.json());
+      } else {
+        detail = publicErrorDetail(await res.text());
+      }
+    } catch (_) {
+      detail = "";
+    }
+    const base = "Buyurtmani yuborib bo'lmadi. Qayta urinib ko'ring.";
+    return detail ? `${base} Server xabari: ${detail}` : base;
   }
 
   function renderMenu(categories) {
@@ -932,10 +995,12 @@
     evt.preventDefault();
     setStatus("");
     if (!cart.size) {
-      setStatus("Savat bo'sh. Avval menyudan qo'shing.", "is-error");
+      setCartNotice("Savat bo'sh. Avval taom qo'shing.", "is-error");
+      setCartOpen(true);
       return;
     }
-    setSubmitState(true);
+    cartNotice = null;
+    renderCart();
     try {
       const form = new FormData(orderForm);
       const payload = {
@@ -948,6 +1013,12 @@
         },
         source: "site",
       };
+      if (!payload.customer.name || !payload.customer.phone || !payload.customer.address) {
+        setStatus("Ism, telefon va manzilni to'ldiring.", "is-error");
+        setCartOpen(true);
+        return;
+      }
+      setSubmitState(true);
       const res = await fetch(tenantPath("/orders"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -955,16 +1026,21 @@
         credentials: "same-origin",
       });
       if (!res.ok) {
-        throw new Error("Yuborishda xatolik");
+        throw new Error(await orderErrorMessage(res));
       }
       const data = await res.json();
-      setStatus(`Buyurtma qabul qilindi: #${data.order_id}`, "is-success");
-      showCartToast("Buyurtmangiz muvaffaqiyatli yuborildi");
-      setCartOpen(false);
-      clearCart();
+      cart.clear();
+      saveCartState();
       orderForm.reset();
+      setCartNotice(
+        `Buyurtma qabul qilindi: #${data.order_id}. Tez orada siz bilan bog'lanamiz. Rahmat!`,
+        "is-success"
+      );
+      showCartToast("Buyurtmangiz qabul qilindi");
+      setCartOpen(true);
     } catch (err) {
-      setStatus((err && err.message) || "Xatolik", "is-error");
+      setStatus((err && err.message) || "Buyurtmani yuborib bo'lmadi. Qayta urinib ko'ring.", "is-error");
+      setCartOpen(true);
     } finally {
       setSubmitState(false);
     }
@@ -993,6 +1069,7 @@
     }
   }
 
+  orderForm.setAttribute("novalidate", "");
   clearBtn.addEventListener("click", clearCart);
   orderForm.addEventListener("submit", submitOrder);
   cartTriggers.forEach((trigger) => {

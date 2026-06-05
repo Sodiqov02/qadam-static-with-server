@@ -241,6 +241,17 @@ def install_menu_error_route(page: Page) -> None:
     page.route("**/t/*/menu", lambda route: route.fulfill(status=500, json={"detail": "menu unavailable"}))
 
 
+def install_order_success_route(page: Page) -> None:
+    page.route("**/t/*/orders", lambda route: route.fulfill(status=200, json={"order_id": 4242}))
+
+
+def install_order_error_route(page: Page) -> None:
+    page.route(
+        "**/t/*/orders",
+        lambda route: route.fulfill(status=503, json={"detail": "Kitchen offline"}),
+    )
+
+
 def run_smoke(url: str, screenshot_dir: Path) -> list[str]:
     issues: list[str] = []
     screenshot_dir.mkdir(parents=True, exist_ok=True)
@@ -630,6 +641,101 @@ def run_branding_smoke(url: str, screenshot_dir: Path) -> list[str]:
     return issues
 
 
+def run_order_flow_smoke(url: str, screenshot_dir: Path) -> list[str]:
+    issues: list[str] = []
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
+        page = context.new_page()
+        install_tenant_profile_route(page, UNBRANDED_TENANT)
+        install_edge_routes(page, EDGE_MENU)
+        install_order_success_route(page)
+        page.goto(url, wait_until="networkidle")
+        clear_cart_storage(page)
+        page.reload(wait_until="networkidle")
+        page.locator(".menu-card").first.wait_for(timeout=8000)
+
+        open_cart(page)
+        assert_true(page.locator(".cart-form").is_hidden(), "empty cart checkout form should be hidden", issues)
+        assert_true(page.locator("#submit-order").is_disabled(), "empty cart submit should be disabled", issues)
+        assert_true(
+            page.locator("#order-form").evaluate("(form) => form.noValidate"),
+            "order form should disable native required validation",
+            issues,
+        )
+        page.locator("#order-form").evaluate("(form) => form.requestSubmit()")
+        page.locator("#cart-empty", has_text="Savat bo'sh. Avval taom qo'shing.").wait_for(timeout=3000)
+        page.screenshot(path=screenshot_dir / "phase6-order-flow-empty-submit.png", full_page=True)
+        assert_true(
+            page.locator("#cart-empty").inner_text(timeout=3000).strip() == "Savat bo'sh. Avval taom qo'shing.",
+            "empty cart submit did not show the app empty-cart message",
+            issues,
+        )
+
+        page.locator("#mobile-cart-close").click()
+        page.wait_for_timeout(300)
+        page.locator(".add-btn").first.click()
+        open_cart(page)
+        assert_true(page.locator(".cart-form").is_visible(), "checkout form should be visible after adding an item", issues)
+        page.locator(".cart-remove-btn").first.click()
+        page.screenshot(path=screenshot_dir / "phase6-order-flow-remove-empty.png", full_page=True)
+        assert_true(page.locator(".cart-item").count() == 0, "removing last item did not empty cart rows", issues)
+        assert_true(page.locator(".cart-form").is_hidden(), "checkout form remains visible after removing last item", issues)
+        assert_true(page.locator("#submit-order").is_disabled(), "submit remains enabled after removing last item", issues)
+        assert_true(page.locator("#cart-empty").is_visible(), "empty state is not visible after removing last item", issues)
+
+        page.locator("#mobile-cart-close").click()
+        page.wait_for_timeout(300)
+        page.locator(".add-btn").first.click()
+        open_cart(page)
+        page.locator('[name="name"]').fill("UX Smoke")
+        page.locator('[name="phone"]').fill("+998901234567")
+        page.locator('[name="address"]').fill("Smoke address")
+        page.locator("#submit-order").click()
+        page.locator("#cart-empty", has_text="Buyurtma qabul qilindi").wait_for(timeout=5000)
+        page.screenshot(path=screenshot_dir / "phase6-order-flow-success.png", full_page=True)
+        success_text = page.locator("#cart-empty").inner_text(timeout=3000)
+        assert_true("Buyurtma qabul qilindi" in success_text, "success state is not visible after order submit", issues)
+        assert_true("bog'lanamiz" in success_text, "success state does not explain follow-up contact", issues)
+        assert_true(page.locator("body.cart-open").count() == 1, "cart should remain open after success", issues)
+        assert_true(page.locator(".cart-item").count() == 0, "cart rows remain after successful order", issues)
+
+        page.locator("#mobile-cart-close").click()
+        page.wait_for_timeout(300)
+        page.unroute("**/t/*/orders")
+        install_order_error_route(page)
+        page.locator(".add-btn").first.click()
+        open_cart(page)
+        page.locator('[name="name"]').fill("UX Smoke")
+        page.locator('[name="phone"]').fill("+998901234567")
+        page.locator('[name="address"]').fill("Smoke address")
+        page.locator("#submit-order").click()
+        page.locator("#order-status", has_text="Qayta urinib").wait_for(timeout=5000)
+        page.screenshot(path=screenshot_dir / "phase6-order-flow-error.png", full_page=True)
+        error_text = page.locator("#order-status").inner_text(timeout=3000)
+        assert_true("Buyurtmani yuborib bo'lmadi" in error_text, "order error text is not user-friendly", issues)
+        assert_true("Qayta urinib ko'ring" in error_text, "order error does not include retry guidance", issues)
+        assert_true("Kitchen offline" in error_text, "safe backend detail is not shown in order error", issues)
+        assert_true("Traceback" not in error_text and ".py:" not in error_text, "technical stack details leaked in order error", issues)
+
+        print(
+            json.dumps(
+                {
+                    "url": url,
+                    "mode": "order-flow",
+                    "screenshots": [str(p) for p in sorted(screenshot_dir.glob("phase6-order-flow-*.png"))],
+                    "issues": issues,
+                },
+                indent=2,
+            )
+        )
+        browser.close()
+
+    return issues
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run public menu UX smoke checks with Playwright Chromium.")
     parser.add_argument("--url", default=DEFAULT_URL)
@@ -637,11 +743,14 @@ def main() -> int:
     parser.add_argument("--edge", action="store_true", help="Run mocked edge-case menu data checks.")
     parser.add_argument("--loading-error", action="store_true", help="Run loading and error UX checks.")
     parser.add_argument("--branding", action="store_true", help="Run tenant branding checks.")
+    parser.add_argument("--order-flow", action="store_true", help="Run checkout order-flow UX checks.")
     args = parser.parse_args()
 
     try:
         if args.branding:
             issues = run_branding_smoke(args.url, args.screenshots)
+        elif args.order_flow:
+            issues = run_order_flow_smoke(args.url, args.screenshots)
         elif args.loading_error:
             issues = run_loading_error_smoke(args.url, args.screenshots)
         elif args.edge:
