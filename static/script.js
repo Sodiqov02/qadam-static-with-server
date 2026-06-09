@@ -136,6 +136,9 @@
     if (value.startsWith("/menu-images/")) {
       return true;
     }
+    if (value.startsWith("/static/demo/")) {
+      return true;
+    }
     try {
       const parsed = new URL(value);
       return parsed.protocol === "http:" || parsed.protocol === "https:";
