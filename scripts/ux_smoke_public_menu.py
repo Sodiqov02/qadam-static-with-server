@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import atexit
+from datetime import datetime, timedelta
 import json
 import os
+import sys
 import uuid
 from pathlib import Path
 
@@ -14,6 +17,17 @@ load_dotenv()
 
 DEFAULT_URL = "http://127.0.0.1:8000/t/demo"
 DEFAULT_SCREENSHOT_DIR = Path("screenshots/ux-stabilization")
+BASE_DIR = Path(__file__).resolve().parents[1]
+SMOKE_ONBOARDING_PREFIX = "smoke-onboarding-"
+SMOKE_ONBOARDING_NAMES = {
+    "Smoke Onboarding",
+    "Smoke Bot Reject",
+    "Smoke Invalid Chat",
+    "Smoke Placeholder",
+}
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 
 EDGE_MENU = {
@@ -101,6 +115,59 @@ BROKEN_LOGO_TENANT = {
 def assert_true(condition: bool, message: str, issues: list[str]) -> None:
     if not condition:
         issues.append(message)
+
+
+def cleanup_onboarding_smoke_tenants(*, slugs: list[str] | None = None, older_than_hours: int | None = None) -> int:
+    try:
+        from sqlalchemy import delete, select
+
+        from src.db import get_session
+        from src.db_models import (
+            AdminLoginToken,
+            AdminSession,
+            BotUser,
+            MenuCategory,
+            MenuItem,
+            Order,
+            Promotion,
+            Reservation,
+            Table,
+            Tenant,
+        )
+    except Exception:
+        return 0
+
+    slug_set = {slug for slug in (slugs or []) if slug.startswith(SMOKE_ONBOARDING_PREFIX)}
+    cutoff = datetime.utcnow() - timedelta(hours=older_than_hours) if older_than_hours is not None else None
+
+    with get_session() as session:
+        query = select(Tenant).where(Tenant.slug.like(f"{SMOKE_ONBOARDING_PREFIX}%"))
+        if slug_set:
+            query = query.where(Tenant.slug.in_(slug_set))
+        if cutoff is not None:
+            query = query.where(Tenant.created_at < cutoff)
+        tenants = session.execute(query).scalars().all()
+        tenant_ids = [
+            tenant.id
+            for tenant in tenants
+            if tenant.slug.startswith(SMOKE_ONBOARDING_PREFIX)
+            and (not slug_set or tenant.slug in slug_set)
+            and (tenant.name in SMOKE_ONBOARDING_NAMES or tenant.name.startswith("Smoke "))
+        ]
+        if not tenant_ids:
+            return 0
+
+        session.execute(delete(AdminSession).where(AdminSession.tenant_id.in_(tenant_ids)))
+        session.execute(delete(AdminLoginToken).where(AdminLoginToken.tenant_id.in_(tenant_ids)))
+        session.execute(delete(BotUser).where(BotUser.tenant_id.in_(tenant_ids)))
+        session.execute(delete(Order).where(Order.tenant_id.in_(tenant_ids)))
+        session.execute(delete(Promotion).where(Promotion.tenant_id.in_(tenant_ids)))
+        session.execute(delete(Reservation).where(Reservation.tenant_id.in_(tenant_ids)))
+        session.execute(delete(Table).where(Table.tenant_id.in_(tenant_ids)))
+        session.execute(delete(MenuItem).where(MenuItem.tenant_id.in_(tenant_ids)))
+        session.execute(delete(MenuCategory).where(MenuCategory.tenant_id.in_(tenant_ids)))
+        session.execute(delete(Tenant).where(Tenant.id.in_(tenant_ids)))
+        return len(tenant_ids)
 
 
 def visible_box(page: Page, selector: str) -> dict:
@@ -951,6 +1018,9 @@ def run_onboarding_smoke(url: str, screenshot_dir: Path) -> list[str]:
     base_url = url.split("/t/")[0].rstrip("/")
     operator_token = os.getenv("ADMIN_SECRET") or "dev_only_admin_secret"
     slug = f"smoke-onboarding-{uuid.uuid4().hex[:8]}"
+    cleanup_onboarding_smoke_tenants(older_than_hours=24)
+    cleanup_slugs = [slug, f"{slug}-bot", f"{slug}-chat", f"{slug}-placeholder"]
+    atexit.register(lambda: cleanup_onboarding_smoke_tenants(slugs=cleanup_slugs))
 
     with sync_playwright() as p:
         denied_request = p.request.new_context(base_url=base_url)

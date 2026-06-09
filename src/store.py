@@ -6,7 +6,7 @@ import re
 import secrets
 from urllib.parse import quote, unquote
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import NoResultFound
 
 from src.db import get_session
@@ -569,12 +569,23 @@ def delete_category_for_tenant(tenant: Tenant, category_id: int) -> tuple[bool, 
 
         has_items = session.execute(
             select(MenuItem.id)
-            .where(MenuItem.tenant_id == tenant.id, MenuItem.category_id == category_id)
+            .where(
+                MenuItem.tenant_id == tenant.id,
+                MenuItem.category_id == category_id,
+                MenuItem.is_active.is_(True),
+            )
             .limit(1)
         ).scalar_one_or_none()
         if has_items is not None:
             return False, "has_items"
 
+        session.execute(
+            delete(MenuItem).where(
+                MenuItem.tenant_id == tenant.id,
+                MenuItem.category_id == category_id,
+                MenuItem.is_active.is_(False),
+            )
+        )
         session.delete(category)
         session.flush()
         return True, None

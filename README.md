@@ -41,14 +41,23 @@ Health check:
 - `GET /healthz` returns `{"status":"ok"}` without exposing secrets or tenant data.
 
 ## Run
-1. Install dependencies:
-   - `pip install -r requirements.txt`
-2. Apply migrations:
-   - `alembic upgrade head`
-3. Start API:
+Windows PowerShell, using the project virtual environment:
+
+1. Activate venv:
+   - `.\.venv\Scripts\Activate.ps1`
+2. Install dependencies:
+   - `python -m pip install -r requirements.txt`
+3. Apply migrations:
+   - `python -m alembic upgrade head`
+4. Start API:
    - `python run_server.py`
-4. Start bot worker:
+5. Start bot worker in a second activated terminal:
    - `python run_bot.py`
+
+If PowerShell script execution is restricted, run the venv interpreter directly:
+- `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`
+- `.\.venv\Scripts\python.exe -m alembic upgrade head`
+- `.\.venv\Scripts\python.exe run_server.py`
 
 ## Production Tenant Bootstrap
 Single provisioning script:
