@@ -29,7 +29,7 @@ DEMO_ITEMS = (
         "category": "Burgerlar",
         "price": 39000,
         "description": "Mol go'shti kotleti, cheddar pishlog'i, yangi sabzavot va maxsus sous.",
-        "image_url": "/static/demo/menu/classic-burger.jpg",
+        "image_url": "/static/demo/menu/classic-burger.webp",
         "sort": 0,
     },
     {
@@ -37,7 +37,7 @@ DEMO_ITEMS = (
         "category": "Burgerlar",
         "price": 43000,
         "description": "Ikki qavat cheddar, yumshoq bulochka, tuzlangan bodring va burger sousi.",
-        "image_url": "/static/demo/menu/cheese-burger.jpg",
+        "image_url": "/static/demo/menu/cheese-burger.webp",
         "sort": 1,
     },
     {
@@ -45,7 +45,7 @@ DEMO_ITEMS = (
         "category": "Lavash",
         "price": 33000,
         "description": "Tovuq filesi, sabzavotlar, fri kartoshka va oq sous bilan o'ralgan lavash.",
-        "image_url": "/static/demo/menu/chicken-lavash.jpg",
+        "image_url": "/static/demo/menu/chicken-lavash.webp",
         "sort": 0,
     },
     {
@@ -53,7 +53,7 @@ DEMO_ITEMS = (
         "category": "Lavash",
         "price": 37000,
         "description": "Mol go'shti, yangi ko'katlar, pomidor va achchiq sousli katta lavash.",
-        "image_url": "/static/demo/menu/beef-lavash.jpg",
+        "image_url": "/static/demo/menu/beef-lavash.webp",
         "sort": 1,
     },
     {
@@ -61,7 +61,7 @@ DEMO_ITEMS = (
         "category": "Pizza",
         "price": 69000,
         "description": "Mozzarella, pepperoni kolbasasi va pomidor sousli issiq pizza.",
-        "image_url": "/static/demo/menu/pepperoni-pizza.jpg",
+        "image_url": "/static/demo/menu/pepperoni-pizza.webp",
         "sort": 0,
     },
     {
@@ -69,7 +69,7 @@ DEMO_ITEMS = (
         "category": "Pizza",
         "price": 59000,
         "description": "Mozzarella, pomidor, rayhon va zaytun moyi bilan klassik pizza.",
-        "image_url": "/static/demo/menu/margherita-pizza.jpg",
+        "image_url": "/static/demo/menu/margherita-pizza.webp",
         "sort": 1,
     },
     {
@@ -77,7 +77,7 @@ DEMO_ITEMS = (
         "category": "Salatlar",
         "price": 35000,
         "description": "Tovuq filesi, romaine salati, parmesan, kruton va caesar sousi.",
-        "image_url": "/static/demo/menu/caesar-salad.jpg",
+        "image_url": "/static/demo/menu/caesar-salad.webp",
         "sort": 0,
     },
     {
@@ -85,7 +85,7 @@ DEMO_ITEMS = (
         "category": "Snacklar",
         "price": 18000,
         "description": "Qarsildoq fri kartoshka, ketchup va maxsus ziravorlar bilan.",
-        "image_url": "/static/demo/menu/fries.jpg",
+        "image_url": "/static/demo/menu/fries.webp",
         "sort": 0,
     },
     {
@@ -93,7 +93,7 @@ DEMO_ITEMS = (
         "category": "Ichimliklar",
         "price": 10000,
         "description": "Sovutilgan firma kola ichimligi.",
-        "image_url": "/static/demo/menu/signature-cola.jpg",
+        "image_url": "/static/demo/menu/signature-cola.webp",
         "sort": 0,
     },
 )
@@ -136,7 +136,7 @@ def _tenant_plan(tenant: Tenant | None, slug: str) -> dict:
                 "Restoranlar uchun to'g'ridan-to'g'ri buyurtmalar, ko'p tilli mehmonlar "
                 "va qulay checkout uchun yaratilgan nafis online buyurtma tajribasi."
             ),
-            "hero_image": "/static/demo/menu/classic-burger.jpg",
+            "hero_image": "/static/demo/menu/classic-burger.webp",
         }
     )
     if tenant is None:
@@ -291,7 +291,7 @@ def restore_demo_tenant(slug: str = "demo", *, dry_run: bool = False) -> dict:
                     "Restoranlar uchun to'g'ridan-to'g'ri buyurtmalar, ko'p tilli mehmonlar "
                     "va qulay checkout uchun yaratilgan nafis online buyurtma tajribasi."
                 ),
-                "hero_image": "/static/demo/menu/classic-burger.jpg",
+                "hero_image": "/static/demo/menu/classic-burger.webp",
             }
         )
         tenant.features = features

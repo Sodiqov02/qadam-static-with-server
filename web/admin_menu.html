@@ -23,6 +23,11 @@
 
       <p class="muted status" id="global-status"></p>
 
+      <section class="orders-panel admin-access-denied-panel" id="access-denied-panel" hidden>
+        <h3>Admin access unavailable</h3>
+        <p id="access-denied-copy">Open the admin link from Telegram again or request a new admin login link.</p>
+      </section>
+
       <section class="orders-panel first-run-panel" id="first-run-panel" hidden>
         <div class="menu-table-toolbar">
           <div>
@@ -34,7 +39,7 @@
         <ul class="first-run-list" id="first-run-list"></ul>
       </section>
 
-      <section class="menu-admin-shell">
+      <section class="menu-admin-shell" id="menu-admin-shell">
         <aside class="menu-admin-form-panel">
           <section class="orders-panel category-manager-panel">
             <div class="menu-table-toolbar">
@@ -168,6 +173,9 @@
     const firstRunPanel = document.getElementById("first-run-panel");
     const firstRunList = document.getElementById("first-run-list");
     const checklistPublicLink = document.getElementById("checklist-public-link");
+    const accessDeniedPanel = document.getElementById("access-denied-panel");
+    const accessDeniedCopy = document.getElementById("access-denied-copy");
+    const menuAdminShell = document.getElementById("menu-admin-shell");
     const accessDeniedMessage = "Access denied. Open the admin link from Telegram again or request a new admin login link.";
     const menuLoadErrorMessage = "Menu data failed to load. Check connection and retry.";
 
@@ -304,6 +312,18 @@
       setGlobalStatus(message);
       setCategoryStatus(message);
       setFormStatus(message);
+      if (accessDeniedCopy) {
+        accessDeniedCopy.textContent = message;
+      }
+      if (accessDeniedPanel) {
+        accessDeniedPanel.hidden = false;
+      }
+      if (menuAdminShell) {
+        menuAdminShell.classList.add("is-access-denied");
+      }
+      if (firstRunPanel) {
+        firstRunPanel.hidden = true;
+      }
       categoryList.innerHTML = "";
       menuItemsBody.innerHTML = "";
       tableMeta.textContent = "0 items";
@@ -726,6 +746,12 @@
           }
           return Number(left.id || 0) - Number(right.id || 0);
         });
+        if (accessDeniedPanel) {
+          accessDeniedPanel.hidden = true;
+        }
+        if (menuAdminShell) {
+          menuAdminShell.classList.remove("is-access-denied");
+        }
         pageTitle.textContent = `${data.tenant?.name || tenantSlug} menu`;
         pageSubtitle.textContent = `Tenant slug: ${data.tenant?.slug || tenantSlug}`;
         fillCategoryOptions();

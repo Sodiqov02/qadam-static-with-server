@@ -470,6 +470,10 @@ body {
   color: #e2e8f0;
   border-color: rgba(148, 163, 184, 0.32);
   background: rgba(255, 255, 255, 0.04);
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .mobile-cart-close {
   display: none;
@@ -551,8 +555,8 @@ body {
   box-shadow: none;
 }
 .cart-qty-btn {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border-radius: 999px;
   background: #ffffff;
@@ -567,6 +571,8 @@ body {
 .cart-remove-btn {
   background: #fff1f2;
   color: #dc2626;
+  min-width: 40px;
+  min-height: 40px;
   padding: 8px 12px;
   border-radius: 999px;
   border: 1px solid #fecdd3;
@@ -875,6 +881,34 @@ textarea { resize: vertical; min-height: 70px; }
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+.inline-actions button,
+.menu-form-actions button,
+.inline-form-row button,
+.menu-admin-nav .ghost-btn,
+.menu-table-toolbar button,
+.upload-row button {
+  min-height: 40px;
+}
+.admin-access-denied-panel {
+  border: 1px solid #fecaca;
+  border-radius: 16px;
+  padding: 18px;
+  background: #fff5f5;
+  color: #7f1d1d;
+}
+.admin-access-denied-panel h3 {
+  margin: 0 0 6px;
+  color: #7f1d1d;
+}
+.admin-access-denied-panel p {
+  margin: 0;
+  line-height: 1.5;
+}
+.menu-admin-shell.is-access-denied .menu-admin-form-panel,
+.menu-admin-shell.is-access-denied .menu-table-wrap,
+.menu-admin-shell.is-access-denied .menu-table-toolbar {
+  display: none;
 }
 .image-thumb {
   width: 68px;
@@ -1912,13 +1946,13 @@ body.public-menu-page .cart-qty {
 }
 
 body.public-menu-page .cart-qty-btn {
-  width: 28px;
-  height: 28px;
+  width: 42px;
+  height: 42px;
 }
 
 body.public-menu-page .cart-remove-btn {
-  width: 28px;
-  height: 28px;
+  min-width: 42px;
+  min-height: 42px;
   padding: 0;
   font-size: 16px;
   line-height: 1;
@@ -1968,6 +2002,7 @@ body.public-menu-page.cart-open .mobile-cart-toggle {
 
 body.public-menu-page .mobile-cart-close {
   display: inline-flex;
+  min-height: 44px;
 }
 
 @media (max-width: 1024px) {
@@ -2961,6 +2996,7 @@ body.public-menu-page .footer-label {
   body.public-menu-page .cart-head-actions .ghost-btn {
     flex: 1 1 0;
     justify-content: center;
+    min-height: 44px;
   }
 
   body.public-menu-page .cart-items {
