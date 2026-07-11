@@ -1,31 +1,34 @@
 from pathlib import Path
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time
+from collections import defaultdict, deque
+from io import BytesIO
 import logging
 import os
 import re
 import secrets
-import shutil
+import threading
+import time as time_module
 import uuid
 from typing import Literal
 from urllib.parse import quote
 
 from alembic import command
 from alembic.config import Config
-from aiogram.exceptions import TelegramAPIError
-from aiogram.utils.token import TokenValidationError
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from src.config import ADMIN_SECRET, settings
 from src.models import Menu, OrderIn, OrderOut
-from src.db import get_session
+from src.db import engine, get_session
 from src.db_models import Tenant
-from src.notifier import notify_admin
+from src.notifier import best_effort_notify, notify_admin
 from src.notifier import notify_order_status_changed, notify_reservation_created, notify_reservation_updated
 from src.store import (
     add_order,
@@ -36,9 +39,9 @@ from src.store import (
     create_admin_login_token_for_tenant,
     create_category_for_tenant,
     create_menu_item_for_tenant,
-    create_reorder_for_phone,
     create_promotion,
     create_reservation,
+    consume_admin_login_token,
     delete_category_for_tenant,
     delete_menu_item_for_tenant,
     get_admin_login_token,
@@ -48,8 +51,6 @@ from src.store import (
     get_tenant_by_slug,
     get_admin_session,
     list_categories_for_tenant,
-    mark_admin_login_token_used,
-    order_history_for_phone,
     list_reservations,
     list_promotions,
     serialize_menu_item,
@@ -102,16 +103,53 @@ def healthz():
     return {"status": "ok"}
 
 
+def _check_directory_writable(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=".readyz-", suffix=".tmp", dir=path, delete=True) as handle:
+        handle.write(b"ok")
+        handle.flush()
+
+
+@app.get("/readyz")
+def readyz():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1")).scalar_one()
+        if not UPLOADS_DIR.exists() or not UPLOADS_DIR.is_dir():
+            raise OSError("upload directory is unavailable")
+        _check_directory_writable(UPLOADS_DIR)
+    except (SQLAlchemyError, OSError) as exc:
+        logger.exception("readiness_failed event=readyz exception_type=%s", type(exc).__name__)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Service unavailable")
+    return {"status": "ok"}
+
+
 class ReservationIn(BaseModel):
-    name: str
-    phone: str
+    name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(min_length=1, max_length=64)
     datetime: datetime
-    guests: int = 1
+    guests: int = Field(default=1, gt=0, le=100)
     table_id: int | None = None
+
+    @field_validator("name", "phone", mode="before")
+    @classmethod
+    def required_text(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Field must not be empty")
+        return normalized
+
+    @field_validator("datetime")
+    @classmethod
+    def future_datetime(cls, value: datetime) -> datetime:
+        now = datetime.now(value.tzinfo) if value.tzinfo else datetime.now()
+        if value <= now:
+            raise ValueError("Reservation datetime must be in the future")
+        return value
 
 
 class ReservationUpdate(BaseModel):
-    status: str
+    status: str = Field(min_length=1, max_length=32)
 
 
 class OrderStatusUpdate(BaseModel):
@@ -197,12 +235,12 @@ class CategoryOut(BaseModel):
 
 
 class AdminLoginRequest(BaseModel):
-    token: str
-    slug: str | None = None
+    token: str = Field(min_length=1, max_length=255)
+    slug: str | None = Field(default=None, max_length=64)
 
 
 class OperatorLoginRequest(BaseModel):
-    secret: str
+    secret: str = Field(min_length=1, max_length=255)
 
 
 class OnboardingTenantRequest(BaseModel):
@@ -230,6 +268,40 @@ SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 PLACEHOLDER_TOKENS = {"<paste_token_locally>", "paste_token_locally", "<token>", "token", "your_token", "bot_token"}
 VALID_PLANS = {"basic", "standard", "vip"}
 BOT_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_IMAGE_PIXELS = 25_000_000
+IMAGE_SUFFIXES = {"JPEG": ".jpg", "PNG": ".png", "GIF": ".gif", "WEBP": ".webp"}
+
+
+class InMemoryRateLimiter:
+    def __init__(self) -> None:
+        self._events: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def check(self, key: str, limit: int, window_seconds: int) -> None:
+        now = time_module.monotonic()
+        cutoff = now - window_seconds
+        with self._lock:
+            events = self._events[key]
+            while events and events[0] <= cutoff:
+                events.popleft()
+            if len(events) >= limit:
+                raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many requests")
+            events.append(now)
+
+
+rate_limiter = InMemoryRateLimiter()
+
+
+def _rate_limit(request: Request, scope: str, limit: int, window_seconds: int) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    rate_limiter.check(f"{scope}:{client_host}", limit, window_seconds)
+
+
+def _rate_limit_upload(request: Request, tenant: Tenant, admin: AdminAuthContext, scope: str) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    admin_key = admin.tenant_id if admin.tenant_id is not None else admin.source
+    rate_limiter.check(f"{scope}:tenant={tenant.id}:admin={admin_key}:ip={client_host}", 10, 300)
 
 
 def _normalize_slug(value: str | None) -> str:
@@ -394,10 +466,41 @@ def require_admin(request: Request, x_admin_token: str | None = Header(default=N
     return AdminAuthContext(tenant_id=None, source="legacy_token")
 
 
+def require_operator_or_admin(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> AdminAuthContext:
+    admin_session = getattr(request.state, "admin_session", None)
+    if admin_session is not None:
+        return AdminAuthContext(tenant_id=admin_session.tenant_id, source="session")
+
+    operator_session = request.cookies.get(OPERATOR_SESSION_COOKIE)
+    expected_operator_session = getattr(request.app.state, "operator_session", None)
+    if (
+        operator_session
+        and expected_operator_session
+        and secrets.compare_digest(str(operator_session), str(expected_operator_session))
+    ):
+        return AdminAuthContext(tenant_id=None, source="operator")
+
+    if x_admin_token == ADMIN_SECRET:
+        return AdminAuthContext(tenant_id=None, source="legacy_token")
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
 def _admin_tenant_dep(
     slug: str,
     tenant=Depends(_tenant_dep),
     admin: AdminAuthContext = Depends(require_admin),
+):
+    _assert_admin_access(admin, tenant)
+    return tenant
+
+
+def _operator_or_admin_tenant_dep(
+    slug: str,
+    tenant=Depends(_tenant_dep),
+    admin: AdminAuthContext = Depends(require_operator_or_admin),
 ):
     _assert_admin_access(admin, tenant)
     return tenant
@@ -444,28 +547,45 @@ def _is_tenant_menu_image_url(value: str, slug: str) -> bool:
     return value.startswith(prefix) or value.startswith(legacy_prefix)
 
 
-def _save_menu_image_file(slug: str, file: UploadFile) -> tuple[str, str]:
-    content_type = (file.content_type or "").lower()
-    if not content_type.startswith("image/"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only image files are allowed")
+async def _validated_image(file: UploadFile) -> tuple[bytes, str]:
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Image file is too large")
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Image file is empty")
+    try:
+        with Image.open(BytesIO(data)) as image:
+            suffix = IMAGE_SUFFIXES.get(str(image.format or "").upper())
+            if not suffix:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported image format")
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Image dimensions are not allowed")
+            image.verify()
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid image file")
+    return data, suffix
 
-    suffix = Path(file.filename or "").suffix.lower()
-    if not suffix:
-        inferred = content_type.split("/", 1)[1].split("+", 1)[0].strip()
-        suffix = f".{inferred}" if inferred else ".img"
-    if suffix == ".jpe":
-        suffix = ".jpg"
-    if not suffix.startswith("."):
-        suffix = f".{suffix}"
 
+async def _save_menu_image_file(slug: str, file: UploadFile) -> tuple[str, str]:
+    data, suffix = await _validated_image(file)
     filename = f"{uuid.uuid4().hex}{suffix}"
     folder = _menu_image_dir(slug)
     destination = folder / filename
-    with destination.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
+    destination.write_bytes(data)
     image_path = f"{slug}/{filename}"
     image_url = f"{_menu_images_url_prefix(slug)}{filename}"
     return image_path, image_url
+
+
+async def _save_hero_image_file(slug: str, file: UploadFile) -> str:
+    data, suffix = await _validated_image(file)
+    filename = f"{uuid.uuid4().hex}{suffix}"
+    destination = _upload_dir(slug, "hero") / filename
+    destination.write_bytes(data)
+    return f"{_uploads_url_prefix(slug, 'hero')}{filename}"
 
 
 def _validate_menu_image_path(image_path: str | None, slug: str) -> str | None:
@@ -482,6 +602,8 @@ def _validate_menu_image_path(image_path: str | None, slug: str) -> str | None:
 
 
 def run_migrations() -> None:
+    # Demo startup migrations are for the current single-worker setup only.
+    # Do not run multiple Uvicorn workers on SQLite without a separate migration review.
     alembic_ini = Path(__file__).resolve().parents[1] / "alembic.ini"
     alembic_dir = Path(__file__).resolve().parents[1] / "alembic"
     config = Config(str(alembic_ini))
@@ -541,7 +663,8 @@ def serve_onboarding(response: Response):
 
 
 @app.post("/api/onboarding/operator-login")
-def onboarding_operator_login(payload: OperatorLoginRequest, response: Response):
+def onboarding_operator_login(payload: OperatorLoginRequest, response: Response, request: Request):
+    _rate_limit(request, "operator-login", 10, 300)
     if not secrets.compare_digest(str(payload.secret or ""), str(ADMIN_SECRET)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
     session_value = _operator_session_value()
@@ -666,7 +789,8 @@ def get_tenant_by_slug_public(slug: str, tenant=Depends(_tenant_dep)):
 
 
 @app.post("/admin/auth/login")
-def admin_auth_login(payload: AdminLoginRequest, response: Response):
+def admin_auth_login(payload: AdminLoginRequest, response: Response, request: Request):
+    _rate_limit(request, "admin-login", 20, 300)
     raw_token = str(payload.token or "").strip()
     normalized_slug = str(payload.slug or "").strip() or None
     if not raw_token:
@@ -675,13 +799,16 @@ def admin_auth_login(payload: AdminLoginRequest, response: Response):
     tenant: Tenant | None = None
     login_token = get_admin_login_token(raw_token)
     if login_token is not None:
+        consumed_tenant_id = consume_admin_login_token(raw_token)
+        if consumed_tenant_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
         with get_session() as session:
             tenant = session.execute(
-                select(Tenant).where(Tenant.id == login_token.tenant_id, Tenant.is_active.is_(True))
+                select(Tenant).where(Tenant.id == consumed_tenant_id, Tenant.is_active.is_(True))
             ).scalar_one_or_none()
-        if normalized_slug and tenant is not None and tenant.slug != normalized_slug:
+        if tenant is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
-        if tenant is not None and not mark_admin_login_token_used(login_token.id):
+        if normalized_slug and tenant.slug != normalized_slug:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
     elif raw_token == ADMIN_SECRET:
         if not normalized_slug:
@@ -750,32 +877,21 @@ def delete_category_api(slug: str, category_id: int, tenant=Depends(_admin_tenan
 @app.post("/t/{slug}/api/admin/upload")
 async def admin_upload_file(
     slug: str,
+    request: Request,
     upload_type: Literal["hero", "menu"] = Form(..., alias="type"),
     file: UploadFile = File(...),
-    tenant=Depends(_admin_tenant_dep),
+    admin: AdminAuthContext = Depends(require_admin),
+    tenant=Depends(_tenant_dep),
 ):
-    if upload_type == "menu":
-        _, public_url = _save_menu_image_file(tenant.slug, file)
-    else:
-        content_type = (file.content_type or "").lower()
-        if not content_type.startswith("image/"):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only image files are allowed")
-        suffix = Path(file.filename or "").suffix.lower()
-        if not suffix:
-            inferred = content_type.split("/", 1)[1].split("+", 1)[0].strip()
-            suffix = f".{inferred}" if inferred else ".img"
-        if suffix == ".jpe":
-            suffix = ".jpg"
-        if not suffix.startswith("."):
-            suffix = f".{suffix}"
-        filename = f"{uuid.uuid4().hex}{suffix}"
-        folder = _upload_dir(tenant.slug, "hero")
-        public_url = f"{_uploads_url_prefix(tenant.slug, 'hero')}{filename}"
-        destination = folder / filename
-
-        with destination.open("wb") as out:
-            shutil.copyfileobj(file.file, out)
-    await file.close()
+    _assert_admin_access(admin, tenant)
+    _rate_limit_upload(request, tenant, admin, "admin-upload")
+    try:
+        if upload_type == "menu":
+            _, public_url = await _save_menu_image_file(tenant.slug, file)
+        else:
+            public_url = await _save_hero_image_file(tenant.slug, file)
+    finally:
+        await file.close()
 
     return {"url": public_url}
 
@@ -783,13 +899,17 @@ async def admin_upload_file(
 @app.post("/admin/upload-image/{tenant}")
 async def upload_menu_image_admin(
     tenant: str,
+    request: Request,
     file: UploadFile = File(...),
     admin: AdminAuthContext = Depends(require_admin),
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
     _assert_admin_access(admin, tenant_obj)
-    image_path, image_url = _save_menu_image_file(tenant_obj.slug, file)
-    await file.close()
+    _rate_limit_upload(request, tenant_obj, admin, "admin-upload")
+    try:
+        image_path, image_url = await _save_menu_image_file(tenant_obj.slug, file)
+    finally:
+        await file.close()
     return {
         "image_path": image_path,
         "image": image_url,
@@ -896,32 +1016,59 @@ def admin_menu_delete(
 
 
 @app.post("/t/{slug}/orders", response_model=OrderOut)
-async def create_order_by_slug(slug: str, order: OrderIn, tenant=Depends(_tenant_dep)):
+async def create_order_by_slug(
+    slug: str,
+    order: OrderIn,
+    request: Request,
+    x_internal_token: str | None = Header(default=None),
+    tenant=Depends(_tenant_dep),
+):
+    _rate_limit(request, f"create-order:{slug}", 30, 60)
+    order_data = order.model_dump()
+    trusted_bot_request = bool(x_internal_token) and secrets.compare_digest(x_internal_token, ADMIN_SECRET)
+    order_data["source"] = "bot" if trusted_bot_request else "site"
+    if not trusted_bot_request:
+        order_data["customer_chat_id"] = None
     try:
-        oid = add_order(order.model_dump(), tenant=tenant)
+        oid = add_order(order_data, tenant=tenant)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     logger.info("[TENANT=%s] Order created id=%s", slug, oid)
-    try:
-        await notify_admin(oid, tenant.id)
-    except (TelegramAPIError, TokenValidationError, ValueError):
-        logger.exception("notify_admin_failed tenant=%s order_id=%s", slug, oid)
+    await best_effort_notify(
+        lambda: notify_admin(oid, tenant.id),
+        event="order_created",
+        tenant_id=tenant.id,
+        tenant_slug=slug,
+        order_id=oid,
+    )
     return OrderOut(order_id=oid)
 
 
 @app.post("/t/{slug}/reservations")
-async def create_reservation_api(slug: str, reservation: ReservationIn, tenant=Depends(_tenant_dep)):
+async def create_reservation_api(
+    slug: str,
+    reservation: ReservationIn,
+    request: Request,
+    tenant=Depends(_tenant_dep),
+):
+    _rate_limit(request, f"create-reservation:{slug}", 15, 60)
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Feature disabled")
     rid = create_reservation(tenant, reservation.model_dump())
-    await notify_reservation_created(tenant, rid)
+    await best_effort_notify(
+        lambda: notify_reservation_created(tenant, rid),
+        event="reservation_created",
+        tenant_id=tenant.id,
+        tenant_slug=slug,
+        reservation_id=rid,
+    )
     return {"reservation_id": rid, "status": "new"}
 
 
 @app.get("/t/{slug}/reservations")
-def list_reservations_api(slug: str, tenant=Depends(_tenant_dep)):
+def list_reservations_api(slug: str, tenant=Depends(_operator_or_admin_tenant_dep)):
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
@@ -930,7 +1077,12 @@ def list_reservations_api(slug: str, tenant=Depends(_tenant_dep)):
 
 
 @app.patch("/t/{slug}/reservations/{rid}")
-async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate, tenant=Depends(_tenant_dep)):
+async def update_reservation_api(
+    slug: str,
+    rid: int,
+    payload: ReservationUpdate,
+    tenant=Depends(_operator_or_admin_tenant_dep),
+):
     if not tenant_has_plan(tenant, "standard"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
@@ -938,35 +1090,23 @@ async def update_reservation_api(slug: str, rid: int, payload: ReservationUpdate
     ok = update_reservation_status(tenant, rid, payload.status)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Reservation not found")
-    await notify_reservation_updated(tenant, rid)
+    await best_effort_notify(
+        lambda: notify_reservation_updated(tenant, rid),
+        event="reservation_updated",
+        tenant_id=tenant.id,
+        tenant_slug=slug,
+        reservation_id=rid,
+    )
     return {"ok": True}
 
 
 @app.get("/t/{slug}/api/orders/history")
-def order_history(slug: str, phone: str, limit: int = 20, tenant=Depends(_tenant_dep)):
-    if not tenant_has_plan(tenant, "standard"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include order history")
-    try:
-        items = order_history_for_phone(tenant, phone, limit=limit)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
-    return {"items": items}
-
-
-@app.post("/t/{slug}/api/orders/{oid}/reorder")
-def reorder_order(slug: str, oid: int, phone: str, tenant=Depends(_tenant_dep)):
-    if not tenant_has_plan(tenant, "standard"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reorder")
-    try:
-        new_id = create_reorder_for_phone(tenant, oid, phone)
-    except LookupError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
-    except PermissionError as exc:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    logger.info("[TENANT=%s] Order created id=%s", slug, new_id)
-    return {"order_id": new_id}
+def order_history(slug: str, request: Request, phone: str, limit: int = 20, tenant=Depends(_tenant_dep)):
+    _rate_limit(request, f"order-history:{slug}", 10, 60)
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "Order history is unavailable until phone ownership verification is implemented",
+    )
 
 
 @app.get("/t/{slug}/api/promotions")
@@ -1032,6 +1172,12 @@ async def update_order_status_api(slug: str, oid: int, payload: OrderStatusUpdat
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
     if not ok or not new:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid status transition or plan restriction")
-    await notify_order_status_changed(order.id, tenant.id, prev, new)
+    await best_effort_notify(
+        lambda: notify_order_status_changed(order.id, tenant.id, prev, new),
+        event="order_status_changed",
+        tenant_id=tenant.id,
+        tenant_slug=slug,
+        order_id=order.id,
+    )
     logger.info("[TENANT=%s] Order status updated id=%s %s->%s", slug, oid, prev, new)
     return {"ok": True, "status": new}

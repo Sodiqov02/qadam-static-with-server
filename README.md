@@ -39,6 +39,10 @@ Required production env vars:
 
 Health check:
 - `GET /healthz` returns `{"status":"ok"}` without exposing secrets or tenant data.
+- `GET /readyz` runs a short DB query and upload-storage write check; it returns `503` when DB or storage is unavailable and does not expose paths, credentials, or tracebacks.
+
+SQLite demo mode:
+- SQLite is supported for local/demo use with one web worker only. The startup migration flow in this repo is intended for that single-worker demo setup; do not run multiple Uvicorn workers on SQLite without a separate migration review.
 
 ## Run
 Windows PowerShell, using the project virtual environment:

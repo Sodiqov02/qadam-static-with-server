@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Optional
 import logging
 
@@ -10,6 +11,39 @@ from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_
 
 _bot_cache: dict[str, Bot] = {}
 logger = logging.getLogger(__name__)
+
+
+async def best_effort_notify(
+    notify_call: Callable[[], Awaitable[None]],
+    *,
+    event: str,
+    tenant_id: int | None = None,
+    tenant_slug: str | None = None,
+    order_id: int | None = None,
+    reservation_id: int | None = None,
+) -> None:
+    try:
+        await notify_call()
+    except (TelegramAPIError, TokenValidationError) as exc:
+        logger.exception(
+            "notification_failed event=%s tenant_id=%s tenant=%s order_id=%s reservation_id=%s exception_type=%s",
+            event,
+            tenant_id,
+            tenant_slug,
+            order_id,
+            reservation_id,
+            type(exc).__name__,
+        )
+    except Exception as exc:
+        logger.exception(
+            "notification_unexpected_failed event=%s tenant_id=%s tenant=%s order_id=%s reservation_id=%s exception_type=%s",
+            event,
+            tenant_id,
+            tenant_slug,
+            order_id,
+            reservation_id,
+            type(exc).__name__,
+        )
 
 
 def _get_bot_for_tenant(tenant: Tenant | None) -> Optional[Bot]:
@@ -34,8 +68,8 @@ async def _safe_send(bot: Bot | None, chat_id: int, text: str) -> None:
         return
     try:
         await bot.send_message(chat_id=chat_id, text=text)
-    except TelegramAPIError:
-        logger.exception("bot_notify_failed chat_id=%s", chat_id)
+    except TelegramAPIError as exc:
+        logger.exception("bot_notify_failed exception_type=%s", type(exc).__name__)
         return
 
 

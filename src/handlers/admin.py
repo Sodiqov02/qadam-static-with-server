@@ -1,12 +1,16 @@
 from functools import wraps
+import logging
+
 from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramAPIError
 
 from src.config import settings
 from src.db_models import Tenant
-from src.notifier import notify_order_status_changed
+from src.notifier import best_effort_notify, notify_order_status_changed
 from src.store import create_admin_login_token_for_tenant, update_order_status
+
+logger = logging.getLogger(__name__)
 
 
 def create_admin_router(tenant: Tenant) -> Router:
@@ -75,7 +79,13 @@ def create_admin_router(tenant: Tenant) -> Router:
             enforce_workflow=True,
         )
         if ok and order and new:
-            await notify_order_status_changed(order.id, tenant.id, prev, new)
+            await best_effort_notify(
+                lambda: notify_order_status_changed(order.id, tenant.id, prev, new),
+                event="bot_order_status_changed",
+                tenant_id=tenant.id,
+                tenant_slug=tenant.slug,
+                order_id=order.id,
+            )
         await _answer_admin(message, "Tasdiqlandi." if ok else "Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("reject"))
@@ -95,7 +105,13 @@ def create_admin_router(tenant: Tenant) -> Router:
             enforce_workflow=True,
         )
         if ok and order and new:
-            await notify_order_status_changed(order.id, tenant.id, prev, new)
+            await best_effort_notify(
+                lambda: notify_order_status_changed(order.id, tenant.id, prev, new),
+                event="bot_order_status_changed",
+                tenant_id=tenant.id,
+                tenant_slug=tenant.slug,
+                order_id=order.id,
+            )
         await _answer_admin(message, "Rad etildi." if ok else "Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("done"))
@@ -115,13 +131,19 @@ def create_admin_router(tenant: Tenant) -> Router:
             enforce_workflow=True,
         )
         if ok and order and new:
-            await notify_order_status_changed(order.id, tenant.id, prev, new)
+            await best_effort_notify(
+                lambda: notify_order_status_changed(order.id, tenant.id, prev, new),
+                event="bot_order_status_changed",
+                tenant_id=tenant.id,
+                tenant_slug=tenant.slug,
+                order_id=order.id,
+            )
         await _answer_admin(message, "Yakunlandi." if ok else "Buyurtma topilmadi yoki status noto'g'ri.")
 
     @router.message(Command("admin"))
     async def admin_login_link(message: types.Message):
         user_id = message.from_user.id if message.from_user else None
-        print("ADMIN COMMAND:", user_id)
+        logger.info("admin_command_received user_id=%s", user_id)
         if not message.chat or not tenant.admin_chat_id or int(message.chat.id) != int(tenant.admin_chat_id):
             await _answer_admin(message, "Access denied")
             return
