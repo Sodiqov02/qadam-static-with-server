@@ -216,7 +216,13 @@
         const head = document.createElement("div");
         head.className = "orders-card-head";
         const text = document.createElement("div");
-        text.innerHTML = `<strong>${label}</strong><div class="muted">${value || "-"}</div>`;
+        const title = document.createElement("strong");
+        title.textContent = label;
+        const valueText = document.createElement("div");
+        valueText.className = "muted";
+        valueText.textContent = value || "-";
+        text.appendChild(title);
+        text.appendChild(valueText);
         head.appendChild(text);
         if (value && /^https?:\/\//.test(value)) {
           const link = document.createElement("a");

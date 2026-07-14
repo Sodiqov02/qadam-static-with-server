@@ -68,7 +68,15 @@
 
         const header = document.createElement("div");
         header.className = "orders-card-head";
-        header.innerHTML = `<div><strong>#${order.id}</strong><div class="muted">${formatDate(order.created_at)}</div></div>`;
+        const headerText = document.createElement("div");
+        const orderId = document.createElement("strong");
+        orderId.textContent = `#${order.id}`;
+        const orderDate = document.createElement("div");
+        orderDate.className = "muted";
+        orderDate.textContent = formatDate(order.created_at);
+        headerText.appendChild(orderId);
+        headerText.appendChild(orderDate);
+        header.appendChild(headerText);
 
         const status = document.createElement("span");
         status.className = "status-pill";
@@ -87,12 +95,7 @@
         footer.className = "orders-card-foot";
         const total = document.createElement("div");
         total.textContent = `Jami: ${formatPrice(order.total)}`;
-        const reorderBtn = document.createElement("button");
-        reorderBtn.type = "button";
-        reorderBtn.textContent = "Qayta buyurtma";
-        reorderBtn.addEventListener("click", () => reorder(order.id, phone));
         footer.appendChild(total);
-        footer.appendChild(reorderBtn);
 
         card.appendChild(header);
         card.appendChild(itemsList);
@@ -116,7 +119,7 @@
       try {
         const res = await fetch(`${tenantPath("/api/orders/history")}?phone=${encodeURIComponent(phone)}`);
         if (res.status === 403) {
-          statusEl.textContent = "Bu funksiya faqat Standard/VIP rejasida mavjud.";
+          statusEl.textContent = "Buyurtmalar tarixi telefon raqamini tasdiqlash qo'shilgandan keyin ishlaydi.";
           listEl.innerHTML = "";
           return;
         }
@@ -127,29 +130,6 @@
         statusEl.textContent = err.message || "Xatolik";
       } finally {
         loadBtn.disabled = false;
-      }
-    }
-
-    async function reorder(orderId, phone) {
-      statusEl.textContent = "";
-      if (!tenantSlug) {
-        statusEl.textContent = tenantRequiredError;
-        return;
-      }
-      try {
-        const res = await fetch(`${tenantPath(`/api/orders/${orderId}/reorder`)}?phone=${encodeURIComponent(phone)}`, {
-          method: "POST",
-        });
-        if (res.status === 403) {
-          statusEl.textContent = "Qayta buyurtma Standard/VIP rejasida mavjud.";
-          return;
-        }
-        if (!res.ok) throw new Error("Qayta buyurtma qilishda xatolik");
-        const data = await res.json();
-        statusEl.textContent = `Yangi buyurtma yaratildi: #${data.order_id}`;
-        await loadOrders();
-      } catch (err) {
-        statusEl.textContent = err.message || "Xatolik";
       }
     }
 

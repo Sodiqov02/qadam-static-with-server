@@ -383,7 +383,12 @@ def create_user_router(tenant: Tenant) -> Router:
         if base_url.endswith("/api"):
             base_url = base_url[:-4]
         async with httpx.AsyncClient() as cx:
-            r = await cx.post(f"{base_url}/t/{tenant.slug}/orders", json=payload, timeout=10)
+            r = await cx.post(
+                f"{base_url}/t/{tenant.slug}/orders",
+                json=payload,
+                headers={"x-internal-token": settings.ADMIN_SECRET},
+                timeout=10,
+            )
             r.raise_for_status()
             order = r.json()
 

@@ -27,7 +27,7 @@ Required Railway resources:
 - web process: `uvicorn run_server:app --host 0.0.0.0 --port $PORT`
 - worker process: `python run_bot.py`
 - PostgreSQL database
-- persistent upload storage: Railway Volume mounted at `/data` or an S3-compatible replacement before relying on image uploads
+- persistent upload storage: Railway Volume mounted at `/data`; S3-compatible storage is not implemented
 
 Required production env vars:
 - `DATABASE_URL`: Railway PostgreSQL connection string

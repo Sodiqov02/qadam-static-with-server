@@ -8,13 +8,15 @@
 - Set `API_BASE_URL` to the public HTTPS app URL.
 - Set `ADMIN_SECRET` to a strong random value. Never commit or paste it into screenshots.
 - Decide upload persistence before launch:
-  - Railway Volume mounted at `/data`, with `UPLOADS_DIR=/data/uploads` and `MENU_IMAGES_DIR=/data/menu_images`; or
-  - S3-compatible storage after implementing an adapter.
+  - mount a persistent Railway Volume at `/data`;
+  - set `UPLOADS_DIR=/data/uploads` and `MENU_IMAGES_DIR=/data/menu_images`.
+- S3-compatible or other external object storage is not implemented. Do not configure uploads without the persistent Volume.
 - Run one release, then verify migrations reached `alembic heads`.
 
 ## Verify after release
 
 - Open `GET /healthz` and confirm `{"status":"ok"}`.
+- Open `GET /readyz` and confirm `{"status":"ready"}`. A `503` means the database or configured upload directories are unavailable.
 - Open `/admin/onboarding` and log in with the operator secret.
 - Create a test tenant without a bot token.
 - Open the generated public menu link `/t/{slug}`.

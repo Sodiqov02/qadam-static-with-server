@@ -75,7 +75,12 @@ Health check:
 
 ```txt
 GET /healthz -> {"status":"ok"}
+GET /readyz  -> {"status":"ready"} when the database and both upload directories are writable
 ```
+
+`/healthz` is the liveness check. Use `/readyz` for deployment readiness; it returns `503` if the database or configured upload storage is unavailable.
+
+Menu and branding uploads currently use the local filesystem only. Production must mount a persistent Railway Volume and set both `UPLOADS_DIR=/data/uploads` and `MENU_IMAGES_DIR=/data/menu_images`. S3 or other object storage is not implemented.
 
 ## Telegram worker
 

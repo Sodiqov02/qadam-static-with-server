@@ -274,7 +274,11 @@
       topItemsEl.innerHTML = "";
       (data.top_items || []).forEach((item) => {
         const row = document.createElement("tr");
-        row.innerHTML = `<td>${item.name}</td><td>${item.qty}</td><td>${formatPrice(item.revenue)}</td>`;
+        [item.name, item.qty, formatPrice(item.revenue)].forEach((value) => {
+          const cell = document.createElement("td");
+          cell.textContent = value ?? "";
+          row.appendChild(cell);
+        });
         topItemsEl.appendChild(row);
       });
     }
@@ -311,14 +315,27 @@
       items.forEach((promo) => {
         const card = document.createElement("div");
         card.className = "orders-card";
-        card.innerHTML = `
-          <div class="orders-card-head">
-            <div><strong>#${promo.id}</strong> · ${promo.type}</div>
-            <span class="status-pill">${promo.is_active ? "Active" : "Inactive"}</span>
-          </div>
-          <div class="muted">Product: ${promo.product_id || "-"} | Discount: ${promo.discount_percent || 0}%</div>
-          <div class="muted">Time: ${promo.start_time || "-"} - ${promo.end_time || "-"} | Days: ${(promo.days_of_week || []).join(", ")}</div>
-        `;
+        const head = document.createElement("div");
+        head.className = "orders-card-head";
+        const title = document.createElement("div");
+        const strong = document.createElement("strong");
+        strong.textContent = `#${promo.id}`;
+        title.appendChild(strong);
+        title.appendChild(document.createTextNode(` · ${promo.type || ""}`));
+        const pill = document.createElement("span");
+        pill.className = "status-pill";
+        pill.textContent = promo.is_active ? "Active" : "Inactive";
+        head.appendChild(title);
+        head.appendChild(pill);
+        const product = document.createElement("div");
+        product.className = "muted";
+        product.textContent = `Product: ${promo.product_id || "-"} | Discount: ${promo.discount_percent || 0}%`;
+        const schedule = document.createElement("div");
+        schedule.className = "muted";
+        schedule.textContent = `Time: ${promo.start_time || "-"} - ${promo.end_time || "-"} | Days: ${(promo.days_of_week || []).join(", ")}`;
+        card.appendChild(head);
+        card.appendChild(product);
+        card.appendChild(schedule);
         const btn = document.createElement("button");
         btn.type = "button";
         btn.textContent = promo.is_active ? "Deactivate" : "Activate";

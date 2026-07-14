@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Literal, Optional
 
 class MenuItem(BaseModel):
@@ -19,16 +19,31 @@ class Menu(BaseModel):
 
 class OrderItem(BaseModel):
     item_id: str
-    qty: int = Field(gt=0)
+    qty: int = Field(gt=0, le=100)
 
 class Customer(BaseModel):
-    name: str
-    phone: str
-    address: str
-    comment: Optional[str] = None
+    name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(min_length=1, max_length=64)
+    address: str = Field(min_length=1, max_length=2000)
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("name", "phone", "address", mode="before")
+    @classmethod
+    def required_text(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Field must not be empty")
+        return normalized
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def optional_text(cls, value: object) -> Optional[str]:
+        if value is None:
+            return None
+        return str(value).strip()
 
 class OrderIn(BaseModel):
-    items: List[OrderItem]
+    items: List[OrderItem] = Field(min_length=1, max_length=100)
     customer: Customer
     source: Literal["site", "bot"] = "site"
     customer_chat_id: Optional[int] = None

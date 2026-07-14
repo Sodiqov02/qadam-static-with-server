@@ -157,20 +157,33 @@ def get_admin_login_token(token: str) -> Optional[AdminLoginToken]:
         return login_token
 
 
+def consume_admin_login_token(token: str) -> Optional[int]:
+    normalized = str(token or "").strip()
+    if not normalized:
+        return None
+
+    with get_session() as session:
+        tenant_id = session.execute(
+            update(AdminLoginToken)
+            .where(
+                AdminLoginToken.token == normalized,
+                AdminLoginToken.used.is_(False),
+                AdminLoginToken.expires_at > datetime.utcnow(),
+            )
+            .values(used=True)
+            .returning(AdminLoginToken.tenant_id)
+        ).scalar_one_or_none()
+        return int(tenant_id) if tenant_id is not None else None
+
+
 def mark_admin_login_token_used(token_id: int) -> bool:
     with get_session() as session:
-        login_token = (
-            session.execute(select(AdminLoginToken).where(AdminLoginToken.id == token_id))
-            .scalars()
-            .first()
+        updated = session.execute(
+            update(AdminLoginToken)
+            .where(AdminLoginToken.id == token_id, AdminLoginToken.used.is_(False))
+            .values(used=True)
         )
-        if not login_token:
-            return False
-        if login_token.used:
-            return False
-        login_token.used = True
-        session.flush()
-        return True
+        return bool(updated.rowcount)
 
 
 def create_admin_session(tenant_id: int, ttl_days: int = ADMIN_SESSION_TTL_DAYS) -> AdminSession:
@@ -1284,15 +1297,6 @@ def list_orders_by_phone(tenant: Tenant, phone: str, limit: int = 20) -> List[Or
         )
 
 
-def get_order_for_tenant(tenant: Tenant, oid: int) -> Optional[Order]:
-    with get_session() as session:
-        return (
-            session.execute(select(Order).where(Order.tenant_id == tenant.id, Order.id == oid))
-            .scalars()
-            .first()
-        )
-
-
 def order_history_for_phone(tenant: Tenant, phone: str, limit: int = 20) -> List[Dict[str, Any]]:
     orders = list_orders_by_phone(tenant, phone, limit=limit)
     item_map = _price_lookup(tenant)
@@ -1327,23 +1331,3 @@ def order_history_for_phone(tenant: Tenant, phone: str, limit: int = 20) -> List
             }
         )
     return result
-
-
-def create_reorder_for_phone(tenant: Tenant, oid: int, phone: str) -> int:
-    order = get_order_for_tenant(tenant, oid)
-    if not order:
-        raise LookupError("Order not found")
-    if not order.customer_phone or order.customer_phone != phone:
-        raise PermissionError("Customer phone mismatch")
-    payload = {
-        "items": order.items or [],
-        "customer": {
-            "name": order.customer_name or "",
-            "phone": order.customer_phone or "",
-            "address": order.customer_address or "",
-            "comment": "Reorder",
-        },
-        "source": "site",
-        "customer_chat_id": order.customer_chat_id,
-    }
-    return add_order(payload, tenant=tenant)

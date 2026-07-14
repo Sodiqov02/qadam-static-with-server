@@ -580,7 +580,13 @@
 
         const groupCell = document.createElement("td");
         groupCell.colSpan = 5;
-        groupCell.innerHTML = `<strong>${category.title || ""}</strong><span class="muted group-meta">${groupItems.length} items</span>`;
+        const groupTitle = document.createElement("strong");
+        groupTitle.textContent = category.title || "";
+        const groupMeta = document.createElement("span");
+        groupMeta.className = "muted group-meta";
+        groupMeta.textContent = `${groupItems.length} items`;
+        groupCell.appendChild(groupTitle);
+        groupCell.appendChild(groupMeta);
         groupRow.appendChild(groupCell);
         menuItemsBody.appendChild(groupRow);
 
