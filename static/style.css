@@ -105,7 +105,7 @@ body {
   font-size: 12px;
   letter-spacing: 0.4px;
 }
-.promo-qr {
+.order-preview-shell {
   margin-top: auto;
   display: flex;
   gap: 12px;
@@ -115,31 +115,6 @@ body {
   border-radius: 14px;
   background: rgba(255,255,255,0.04);
   border: 1px dashed rgba(255,255,255,0.12);
-}
-.promo-qr img {
-  width: 80px;
-  height: 80px;
-  object-fit: cover;
-  border-radius: 12px;
-}
-.qr-placeholder {
-  width: 80px;
-  height: 80px;
-  border-radius: 14px;
-  background: #0f172a;
-  display: grid;
-  place-items: center;
-  color: #9ca3af;
-  font-weight: 700;
-  border: 1px solid rgba(255,255,255,0.08);
-}
-.promo-meta span { display: block; font-weight: 700; }
-.promo-meta small { color: #cbd5e1; }
-.promo-meta a {
-  color: #a5f3fc;
-  font-weight: 700;
-  text-decoration: none;
-  overflow-wrap: anywhere;
 }
 
 .content {
@@ -1122,7 +1097,7 @@ button.cart-remove-btn:hover {
   .promo-plate {
     min-width: 0;
   }
-  .promo-qr {
+  .order-preview-shell {
     flex-direction: column;
     align-items: flex-start;
   }
@@ -1403,45 +1378,10 @@ body.public-menu-page .promo-copy {
   color: rgba(248, 250, 252, 0.88);
 }
 
-body.public-menu-page .promo-qr {
+body.public-menu-page .order-preview-shell {
   margin-top: 8px;
   align-items: center;
   background: rgba(255, 255, 255, 0.06);
-}
-
-body.public-menu-page .promo-qr img {
-  object-fit: contain;
-  border-radius: 0;
-  background: #ffffff;
-  padding: 4px;
-}
-
-body.public-menu-page .qr-placeholder {
-  overflow: visible;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-body.public-menu-page .promo-meta {
-  display: grid;
-  gap: 4px;
-}
-
-body.public-menu-page .promo-meta span {
-  color: #f8fafc;
-}
-
-body.public-menu-page .promo-meta a {
-  color: #bbf7d0;
-}
-
-body.public-menu-page .promo-meta small {
-  color: rgba(226, 232, 240, 0.88);
-  line-height: 1.45;
-}
-
-body.public-menu-page .bot-reference-links[hidden] {
-  display: none !important;
 }
 
 body.public-menu-page .hero-eyebrow {
@@ -2361,7 +2301,7 @@ body.public-menu-page .promo-copy {
   color: rgba(255, 246, 231, 0.7);
 }
 
-body.public-menu-page .promo-qr {
+body.public-menu-page .order-preview-shell {
   display: block;
   padding: 0;
   border: 0;

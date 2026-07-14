@@ -90,8 +90,8 @@ BRANDED_TENANT = {
     "theme_mode": "dark",
     "plan": "standard",
     "features": {"plan": "standard"},
-    "bot_username": None,
-    "bot_enabled": False,
+    "bot_username": "deliveringbotliqibot",
+    "bot_enabled": True,
 }
 UNBRANDED_TENANT = {
     "name": "No Brand Smoke",
@@ -589,6 +589,8 @@ def run_branding_smoke(url: str, screenshot_dir: Path) -> list[str]:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1, is_mobile=True)
         page = context.new_page()
+        requested_urls: list[str] = []
+        page.on("request", lambda request: requested_urls.append(request.url))
         install_tenant_profile_route(page, BRANDED_TENANT)
         install_edge_routes(page, EDGE_MENU)
         page.goto(url, wait_until="networkidle")
@@ -610,7 +612,13 @@ def run_branding_smoke(url: str, screenshot_dir: Path) -> list[str]:
                 dark: document.body.classList.contains("theme-dark"),
                 loadingBusy: document.querySelectorAll("#menu[aria-busy='true']").length,
                 errorState: document.querySelectorAll(".menu-error-state").length,
-                cards: document.querySelectorAll(".menu-card").length
+                cards: document.querySelectorAll(".menu-card").length,
+                telegramVisible: getComputedStyle(document.querySelector("#header-telegram-link")).display !== "none",
+                telegramHref: document.querySelector("#header-telegram-link")?.href || "",
+                telegramTarget: document.querySelector("#header-telegram-link")?.target || "",
+                telegramRel: document.querySelector("#header-telegram-link")?.rel || "",
+                footerTelegramHref: document.querySelector("#footer-telegram-link")?.href || "",
+                overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth
             })"""
         )
         assert_true(branding_state["logoVisible"], "logo is not visible after branding load", issues)
@@ -621,6 +629,13 @@ def run_branding_smoke(url: str, screenshot_dir: Path) -> list[str]:
         assert_true(branding_state["loadingBusy"] == 0, "menu remains aria-busy after branded load", issues)
         assert_true(branding_state["errorState"] == 0, "branded page unexpectedly shows menu error state", issues)
         assert_true(branding_state["cards"] == 3, "branded page did not render menu cards", issues)
+        assert_true(branding_state["telegramVisible"], "Telegram button is hidden for an enabled valid bot", issues)
+        assert_true(branding_state["telegramHref"] == "https://t.me/deliveringbotliqibot", "Telegram button has the wrong tenant username", issues)
+        assert_true(branding_state["footerTelegramHref"] == "https://t.me/deliveringbotliqibot", "footer Telegram link has the wrong tenant username", issues)
+        assert_true(branding_state["telegramTarget"] == "_blank", "Telegram button must open in a new tab", issues)
+        assert_true("noopener" in branding_state["telegramRel"].split(), "Telegram button must use rel=noopener", issues)
+        assert_true(not branding_state["overflow"], "branded mobile hero has horizontal overflow", issues)
+        assert_true(not any("qr" in request_url.lower() for request_url in requested_urls), "public page made an unexpected QR request", issues)
 
         page.unroute("**/t/*/tenant")
         page.unroute("**/t/*/menu")
@@ -655,7 +670,9 @@ def run_branding_smoke(url: str, screenshot_dir: Path) -> list[str]:
                 accent: getComputedStyle(document.documentElement).getPropertyValue("--tenant-accent").trim(),
                 themeClass: document.body.classList.contains("theme-light") || document.body.classList.contains("theme-dark"),
                 cards: document.querySelectorAll(".menu-card").length,
-                errorState: document.querySelectorAll(".menu-error-state").length
+                errorState: document.querySelectorAll(".menu-error-state").length,
+                telegramVisible: getComputedStyle(document.querySelector("#header-telegram-link")).display !== "none",
+                footerTelegramHref: document.querySelector("#footer-telegram-link")?.getAttribute("href") || ""
             })"""
         )
         assert_true(not unbranded_state["logoVisible"], "logo remains visible without branding", issues)
@@ -664,6 +681,23 @@ def run_branding_smoke(url: str, screenshot_dir: Path) -> list[str]:
         assert_true(not unbranded_state["themeClass"], "theme class remains set without branding", issues)
         assert_true(unbranded_state["cards"] == 3, "unbranded page did not render menu cards", issues)
         assert_true(unbranded_state["errorState"] == 0, "unbranded page unexpectedly shows menu error state", issues)
+        assert_true(not unbranded_state["telegramVisible"], "Telegram button remains visible without a username", issues)
+        assert_true(unbranded_state["footerTelegramHref"] == "", "footer Telegram link retains the previous tenant URL", issues)
+
+        desktop_context = browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
+        desktop_page = desktop_context.new_page()
+        install_tenant_profile_route(desktop_page, BRANDED_TENANT)
+        install_edge_routes(desktop_page, EDGE_MENU)
+        desktop_page.goto(url, wait_until="networkidle")
+        desktop_page.locator(".menu-card").first.wait_for(timeout=8000)
+        desktop_page.screenshot(path=screenshot_dir / "phase5-branding-desktop.png", full_page=True)
+        assert_true(
+            desktop_page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+            "branded desktop hero has horizontal overflow",
+            issues,
+        )
+        assert_true(desktop_page.locator(".order-preview-shell").is_visible(), "desktop order preview card is missing", issues)
+        desktop_context.close()
 
         admin_payloads: list[dict] = []
         page.route("**/t/*/api/admin/analytics**", lambda route: route.fulfill(json={"orders": 0, "revenue": 0, "average_check": 0, "top_items": []}))

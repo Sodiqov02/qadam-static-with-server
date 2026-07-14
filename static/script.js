@@ -27,9 +27,6 @@
   const ordersLink = document.getElementById("orders-link");
   const adminLink = document.getElementById("admin-link");
   const headerTelegramLink = document.getElementById("header-telegram-link");
-  const botLink = document.getElementById("bot-link");
-  const botQr = document.getElementById("bot-qr");
-  const botMeta = document.getElementById("bot-meta");
   const siteLogo = document.getElementById("site-logo");
   const siteTitle = document.getElementById("site-title");
   const footerTitle = document.getElementById("footer-title");
@@ -515,10 +512,6 @@
       headerTelegramLink.style.display = "";
       headerTelegramLink.href = "#";
     }
-    if (botLink) {
-      botLink.textContent = "@bot";
-      botLink.href = "#";
-    }
     if (footerTelegramLink) {
       footerTelegramLink.textContent = "Mavjud emas";
       footerTelegramLink.href = "#";
@@ -900,27 +893,18 @@
       }
     }
 
-    const botUsername = (data.bot_username || "").replace("@", "");
-    if (data.bot_enabled && botUsername) {
+    const botUsername = (data.bot_username || "").replace(/^@+/, "");
+    const botUsernameValid = /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(botUsername);
+    if (data.bot_enabled && botUsernameValid) {
       const link = `https://t.me/${botUsername}`;
       if (headerTelegramLink) {
         headerTelegramLink.href = link;
         headerTelegramLink.textContent = "Telegram";
         headerTelegramLink.style.display = "";
       }
-      if (botLink) {
-        botLink.textContent = `@${botUsername}`;
-        botLink.href = link;
-      }
       if (footerTelegramLink) {
         footerTelegramLink.textContent = `@${botUsername}`;
         footerTelegramLink.href = link;
-      }
-      if (botQr) {
-        botQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(link)}`;
-      }
-      if (botMeta) {
-        botMeta.textContent = "Tezkor buyurtma va aloqa uchun Telegram botga o'ting";
       }
       if (footerPhone) {
         footerPhone.textContent = "Aloqa Telegram orqali";
@@ -929,19 +913,9 @@
       if (headerTelegramLink) {
         headerTelegramLink.style.display = "none";
       }
-      if (botLink) {
-        botLink.textContent = "Bot mavjud emas";
-        botLink.removeAttribute("href");
-      }
       if (footerTelegramLink) {
         footerTelegramLink.textContent = "Mavjud emas";
         footerTelegramLink.removeAttribute("href");
-      }
-      if (botQr) {
-        botQr.removeAttribute("src");
-      }
-      if (botMeta) {
-        botMeta.textContent = "Telegram bot ulanmagan";
       }
       if (footerPhone) {
         footerPhone.textContent = "Telefon raqami mavjud emas";
