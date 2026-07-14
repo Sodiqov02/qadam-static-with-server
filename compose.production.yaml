@@ -1,0 +1,24 @@
+services:
+  api:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.8-alpine
+    environment:
+      QADAM_DOMAIN: ${QADAM_DOMAIN:?Set QADAM_DOMAIN in the VPS environment}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

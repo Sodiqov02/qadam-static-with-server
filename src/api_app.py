@@ -118,6 +118,9 @@ def readyz():
         if not UPLOADS_DIR.exists() or not UPLOADS_DIR.is_dir():
             raise OSError("upload directory is unavailable")
         _check_directory_writable(UPLOADS_DIR)
+        if not MENU_IMAGES_DIR.exists() or not MENU_IMAGES_DIR.is_dir():
+            raise OSError("menu image directory is unavailable")
+        _check_directory_writable(MENU_IMAGES_DIR)
     except (SQLAlchemyError, OSError) as exc:
         logger.exception("readiness_failed event=readyz exception_type=%s", type(exc).__name__)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Service unavailable")

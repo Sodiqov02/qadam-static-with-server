@@ -79,7 +79,7 @@ def create_user_router(tenant: Tenant) -> Router:
                 continue
 
     async def _load_menu() -> dict:
-        base_url = (settings.API_BASE_URL or "").rstrip("/")
+        base_url = (settings.QADAM_API_BASE_URL or "").rstrip("/")
         if base_url.endswith("/api"):
             base_url = base_url[:-4]
         if not base_url:
@@ -392,7 +392,7 @@ def create_user_router(tenant: Tenant) -> Router:
             "source": "bot",
             "customer_chat_id": user_id,
         }
-        base_url = (settings.API_BASE_URL or "").rstrip("/")
+        base_url = (settings.QADAM_API_BASE_URL or "").rstrip("/")
         if base_url.endswith("/api"):
             base_url = base_url[:-4]
         async with httpx.AsyncClient() as cx:

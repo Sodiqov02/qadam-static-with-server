@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 # stability fix: .env is optional; environment variables still work without it.
 load_dotenv()
 
-API_BASE_URL = os.getenv("API_BASE_URL", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+QADAM_API_BASE_URL = os.getenv("QADAM_API_BASE_URL", API_BASE_URL)
 PORT = int(os.getenv("PORT", "8000"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -43,6 +44,7 @@ ADMIN_SECRET = _admin_secret_from_env()
 # Backward-compatible settings object used by existing imports.
 settings = SimpleNamespace(
     API_BASE_URL=API_BASE_URL,
+    QADAM_API_BASE_URL=QADAM_API_BASE_URL,
     PORT=PORT,
     DATABASE_URL=DATABASE_URL,
     ADMIN_SECRET=ADMIN_SECRET,

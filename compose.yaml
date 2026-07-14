@@ -1,0 +1,48 @@
+name: qadam
+
+x-qadam: &qadam
+  build:
+    context: .
+  image: qadam:local
+  env_file:
+    - ${QADAM_ENV_FILE:-.env}
+  environment:
+    DATABASE_URL: sqlite:////data/qadam.db
+    UPLOADS_DIR: /data/uploads
+    MENU_IMAGES_DIR: /data/menu_images
+  volumes:
+    - qadam_data:/data
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *qadam
+    command: ["python", "run_server.py"]
+    environment:
+      DATABASE_URL: sqlite:////data/qadam.db
+      UPLOADS_DIR: /data/uploads
+      MENU_IMAGES_DIR: /data/menu_images
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  bot:
+    <<: *qadam
+    command: ["python", "run_bot.py"]
+    environment:
+      DATABASE_URL: sqlite:////data/qadam.db
+      UPLOADS_DIR: /data/uploads
+      MENU_IMAGES_DIR: /data/menu_images
+      QADAM_API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  qadam_data:

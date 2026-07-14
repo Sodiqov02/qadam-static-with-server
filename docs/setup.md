@@ -1,5 +1,50 @@
 # Qadam Local Server Setup
 
+## Docker Compose (recommended)
+
+Install Docker Desktop (Windows/macOS) or Docker Engine with the Compose plugin (Linux).
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+docker compose ps
+curl http://127.0.0.1:8000/healthz
+curl http://127.0.0.1:8000/readyz
+```
+
+On PowerShell use `Copy-Item .env.example .env`. Set a strong local `ADMIN_SECRET` in `.env`; never commit that file. The API is published only at `127.0.0.1:8000`. The bot has no published port and reaches the API as `http://api:8000` through `QADAM_API_BASE_URL`.
+
+For isolated testing, point Compose at a separate untracked env file with `QADAM_ENV_FILE`; the default remains `.env`.
+
+```bash
+docker compose logs -f api
+docker compose logs -f bot
+docker compose stop
+docker compose down
+```
+
+`docker compose down` retains the named `qadam_data` volume. Do not use `down -v` unless intentionally deleting the SQLite database and uploads. Only one API worker and one bot replica are supported with SQLite; do not use `docker compose up --scale`.
+
+Back up the complete data volume while services are stopped:
+
+```bash
+docker compose stop
+docker run --rm -v qadam_qadam_data:/data -v "$PWD:/backup" alpine tar czf /backup/qadam-data.tgz -C /data .
+docker compose start
+```
+
+Restore into an empty volume (this replaces its contents):
+
+```bash
+docker compose down
+docker volume create qadam_qadam_data
+docker run --rm -v qadam_qadam_data:/data -v "$PWD:/backup" alpine sh -c "rm -rf /data/* && tar xzf /backup/qadam-data.tgz -C /data"
+docker run --rm --user 0 -v qadam_qadam_data:/data qadam:local chown -R 10001:10001 /data
+docker compose up -d
+```
+
+The ownership step is required because the application image runs as UID/GID `10001`. For an online SQLite-only backup, use Python's `sqlite3.Connection.backup()` API instead of copying an active `.db` file; the stopped full-volume archive above also preserves uploads and SQLite sidecars consistently.
+
 ## Run server
 
 ```bash
@@ -64,10 +109,13 @@ Required env vars:
 DATABASE_URL
 ADMIN_SECRET
 API_BASE_URL
+QADAM_API_BASE_URL
 UPLOADS_DIR=/data/uploads
 MENU_IMAGES_DIR=/data/menu_images
 PORT
 ```
+
+`API_BASE_URL` is the public browser-facing origin. `QADAM_API_BASE_URL` is used by the bot for internal HTTP calls and defaults to `API_BASE_URL` for non-Docker local runs.
 
 Never commit `ADMIN_SECRET`, bot tokens, database URLs, or generated admin links.
 

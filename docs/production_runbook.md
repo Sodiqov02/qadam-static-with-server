@@ -1,5 +1,21 @@
 # Qadam Production Runbook
 
+## Docker Compose VPS preview
+
+The same application image can run behind Caddy without publishing FastAPI port 8000:
+
+```bash
+cp .env.example .env
+# Set APP_ENV=production, API_BASE_URL=https://your-domain.example,
+# ADMIN_SECRET, and QADAM_DOMAIN in .env.
+docker compose -f compose.yaml -f compose.production.yaml config
+docker compose -f compose.yaml -f compose.production.yaml up --build -d
+```
+
+Caddy listens on 80/443, obtains HTTPS certificates automatically, and stores certificate state in `caddy_data`. DNS must already point the configured domain to the VPS. This repository does not purchase, configure, or deploy a VPS. Keep `QADAM_API_BASE_URL=http://api:8000` for the bot. Run exactly one API worker and one bot replica while using SQLite.
+
+Back up and restore `/data` using the volume procedure in `docs/setup.md`. A consistent SQLite backup requires stopping both services first.
+
 ## First Railway deploy checklist
 
 - Create a Railway PostgreSQL database and set `DATABASE_URL`.
