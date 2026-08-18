@@ -22,8 +22,11 @@ Use `.env` (see `.env.example`):
 
 `ADMIN_SECRET` protects internal operator/admin routes. Set it to a strong random value in production and never commit it.
 
-## Railway Production Notes
-Required Railway resources:
+## Production Notes
+
+The canonical self-hosted deployment is `compose.production.yaml`: Caddy, FastAPI, the Telegram worker, and PostgreSQL 16. See `docs/production_runbook.md`.
+
+For an optional Railway deployment, required resources are:
 - web process: `uvicorn run_server:app --host 0.0.0.0 --port $PORT`
 - worker process: `python run_bot.py`
 - PostgreSQL database

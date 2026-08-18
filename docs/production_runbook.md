@@ -6,17 +6,19 @@ The same application image can run behind Caddy without publishing FastAPI port 
 
 ```bash
 cp .env.example .env
-# Set APP_ENV=production, API_BASE_URL=https://your-domain.example,
-# ADMIN_SECRET, and QADAM_DOMAIN in .env.
-docker compose -f compose.yaml -f compose.production.yaml config
-docker compose -f compose.yaml -f compose.production.yaml up --build -d
+# Set API_BASE_URL=https://your-domain.example, ADMIN_SECRET, QADAM_DOMAIN,
+# and a URL-safe POSTGRES_PASSWORD in .env.
+docker compose -f compose.production.yaml config
+docker compose -f compose.production.yaml up --build -d
 ```
 
-Caddy listens on 80/443, obtains HTTPS certificates automatically, and stores certificate state in `caddy_data`. DNS must already point the configured domain to the VPS. This repository does not purchase, configure, or deploy a VPS. Keep `QADAM_API_BASE_URL=http://api:8000` for the bot. Run exactly one API worker and one bot replica while using SQLite.
+Caddy listens on 80/443, obtains HTTPS certificates automatically, and stores certificate state in `caddy_data`. DNS must already point the configured domain to the VPS. This repository does not purchase, configure, or deploy a VPS. Production Compose runs PostgreSQL 16 on the private `app_internal` network and persists it in `qadam_postgres_data`. Keep `QADAM_API_BASE_URL=http://api:8000` for the bot. Caddy and API share the narrow `172.30.0.0/29` `caddy_api` network, with deterministic addresses `172.30.0.2` for Caddy and `172.30.0.3` for API; Uvicorn trusts proxy headers only from Caddy and loopback. The bot is attached only to `app_internal`. API rate limiting is process-local, so run one API replica until a shared rate-limit backend is implemented.
 
-Back up and restore `/data` using the volume procedure in `docs/setup.md`. A consistent SQLite backup requires stopping both services first.
+Order and reservation notifications are best-effort. The database write completes before a Telegram notification is scheduled, and the HTTP response does not wait for Telegram. Uvicorn normally lets in-flight background tasks finish during graceful shutdown, but a crash, forced kill, graceful-shutdown timeout, or abrupt restart can lose a notification. The saved order or reservation remains in the database, delivery is not guaranteed, and there is no automatic retry queue.
 
-## First Railway deploy checklist
+Back up both `qadam_postgres_data` and `/data` uploads. Prefer `pg_dump`/`pg_restore` for database backups rather than copying a live PostgreSQL volume.
+
+## Optional Railway deploy checklist
 
 - Create a Railway PostgreSQL database and set `DATABASE_URL`.
 - Configure the web process from `Procfile`: `uvicorn run_server:app --host 0.0.0.0 --port $PORT`.
@@ -40,6 +42,22 @@ Back up and restore `/data` using the volume procedure in `docs/setup.md`. A con
 - Create a category, dish, and image upload.
 - Place a test order from the public menu.
 - Check web and worker logs for startup errors.
+
+For a repeatable two-tenant pilot check, run the repository smoke script from a trusted operator machine:
+
+```bash
+python scripts/pilot_live_smoke.py run \
+  --base-url https://your-domain.example \
+  --operator-secret "$ADMIN_SECRET" \
+  --state /tmp/qadam-pilot-state.json
+
+# After restarting the stack:
+python scripts/pilot_live_smoke.py verify-restart \
+  --base-url https://your-domain.example \
+  --state /tmp/qadam-pilot-state.json
+```
+
+The temporary state file contains short-lived validation cookies. Keep it outside the repository, restrict access to it, and delete it after the restart check. The smoke creates two uniquely named test tenants and persistent test orders; use a disposable validation database or remove those records through an approved operator procedure.
 
 ## Creating the first restaurant
 

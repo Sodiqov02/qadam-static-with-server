@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -12,11 +13,11 @@ import threading
 import time as time_module
 import uuid
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from alembic import command
 from alembic.config import Config
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -28,31 +29,40 @@ from src.config import ADMIN_SECRET, settings
 from src.models import Menu, OrderIn, OrderOut
 from src.db import engine, get_session
 from src.db_models import Tenant
-from src.notifier import best_effort_notify, notify_admin
+from src.notifier import best_effort_notify, close_bot_cache, notify_admin
 from src.notifier import notify_order_status_changed, notify_reservation_created, notify_reservation_updated
 from src.store import (
     add_order,
     active_promotions_for_tenant,
     analytics_for_tenant,
     bootstrap_tenant,
+    cleanup_expired_auth_records,
     create_admin_session,
     create_admin_login_token_for_tenant,
+    create_operator_session,
     create_category_for_tenant,
     create_menu_item_for_tenant,
     create_promotion,
     create_reservation,
-    consume_admin_login_token,
+    consume_admin_login_token_for_slug,
     delete_category_for_tenant,
     delete_menu_item_for_tenant,
-    get_admin_login_token,
     get_menu_admin_payload,
+    get_menu_item_image_path_for_tenant,
     get_menu_for_tenant,
     get_active_tenant_by_slug,
     get_tenant_by_slug,
     get_admin_session,
+    get_operator_session,
     list_categories_for_tenant,
     list_reservations,
     list_promotions,
+    menu_image_path_in_use,
+    normalize_days_of_week,
+    normalize_reservation_status,
+    normalize_timezone_name,
+    revoke_admin_session,
+    revoke_operator_session,
     serialize_menu_item,
     serialize_promotion,
     update_category_for_tenant,
@@ -154,6 +164,11 @@ class ReservationIn(BaseModel):
 class ReservationUpdate(BaseModel):
     status: str = Field(min_length=1, max_length=32)
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def valid_status(cls, value: object) -> str:
+        return normalize_reservation_status(value)
+
 
 class OrderStatusUpdate(BaseModel):
     status: str
@@ -168,6 +183,11 @@ class PromotionIn(BaseModel):
     end_time: time | None = None
     days_of_week: list[int] | None = None
 
+    @field_validator("days_of_week", mode="before")
+    @classmethod
+    def valid_days_of_week(cls, value: object) -> list[int] | None:
+        return normalize_days_of_week(value)
+
 
 class PromotionUpdate(BaseModel):
     type: str | None = None
@@ -177,6 +197,11 @@ class PromotionUpdate(BaseModel):
     start_time: time | None = None
     end_time: time | None = None
     days_of_week: list[int] | None = None
+
+    @field_validator("days_of_week", mode="before")
+    @classmethod
+    def valid_days_of_week(cls, value: object) -> list[int] | None:
+        return normalize_days_of_week(value)
 
 
 class TenantPublic(BaseModel):
@@ -191,6 +216,7 @@ class TenantPublic(BaseModel):
     features: dict | None = None
     bot_username: str | None = None
     bot_enabled: bool | None = None
+    timezone: str = "Asia/Tashkent"
 
 
 class TenantAdminUpdate(BaseModel):
@@ -200,6 +226,14 @@ class TenantAdminUpdate(BaseModel):
     primary_color: str | None = None
     accent_color: str | None = None
     theme_mode: str | None = None
+    timezone: str | None = None
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def valid_timezone(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        return normalize_timezone_name(value)
 
 
 class MenuItemAdminUpdate(BaseModel):
@@ -255,6 +289,12 @@ class OnboardingTenantRequest(BaseModel):
     bot_username: str | None = None
     enable_bot: bool = False
     initial_categories: list[str] | None = None
+    timezone: str = "Asia/Tashkent"
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def valid_timezone(cls, value: object) -> str:
+        return normalize_timezone_name(value)
 
 
 @dataclass
@@ -274,18 +314,49 @@ BOT_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PIXELS = 25_000_000
 IMAGE_SUFFIXES = {"JPEG": ".jpg", "PNG": ".png", "GIF": ".gif", "WEBP": ".webp"}
+AUTH_CLEANUP_INTERVAL_SECONDS = 60 * 60
 
 
 class InMemoryRateLimiter:
     def __init__(self) -> None:
         self._events: dict[str, deque[float]] = defaultdict(deque)
+        self._windows: dict[str, int] = {}
         self._lock = threading.Lock()
+        self._checks_since_cleanup = 0
+
+    def cleanup_expired(self, now: float | None = None, max_keys: int | None = None) -> int:
+        current = time_module.monotonic() if now is None else now
+        removed = 0
+        with self._lock:
+            keys = list(self._events)
+            if max_keys is not None:
+                keys = keys[:max_keys]
+            for key in keys:
+                events = self._events.get(key)
+                if events is None:
+                    continue
+                cutoff = current - self._windows.get(key, 300)
+                while events and events[0] <= cutoff:
+                    events.popleft()
+                if not events:
+                    self._events.pop(key, None)
+                    self._windows.pop(key, None)
+                    removed += 1
+                elif max_keys is not None:
+                    self._events[key] = self._events.pop(key)
+                    self._windows[key] = self._windows.pop(key)
+        return removed
 
     def check(self, key: str, limit: int, window_seconds: int) -> None:
         now = time_module.monotonic()
         cutoff = now - window_seconds
+        self._checks_since_cleanup += 1
+        if self._checks_since_cleanup >= 256:
+            self.cleanup_expired(now=now, max_keys=256)
+            self._checks_since_cleanup = 0
         with self._lock:
             events = self._events[key]
+            self._windows[key] = max(window_seconds, self._windows.get(key, 0))
             while events and events[0] <= cutoff:
                 events.popleft()
             if len(events) >= limit:
@@ -294,6 +365,40 @@ class InMemoryRateLimiter:
 
 
 rate_limiter = InMemoryRateLimiter()
+
+
+class AuthCleanupThrottle:
+    def __init__(self, interval_seconds: float = AUTH_CLEANUP_INTERVAL_SECONDS) -> None:
+        self._interval_seconds = interval_seconds
+        self._next_run = 0.0
+        self._lock = threading.Lock()
+
+    def defer(self, now: float | None = None) -> None:
+        current = time_module.monotonic() if now is None else now
+        with self._lock:
+            self._next_run = current + self._interval_seconds
+
+    def maybe_cleanup(self, cleanup_call=None, now: float | None = None) -> bool:
+        cleanup = cleanup_call or cleanup_expired_auth_records
+        current = time_module.monotonic() if now is None else now
+        if current < self._next_run or not self._lock.acquire(blocking=False):
+            return False
+        try:
+            if current < self._next_run:
+                return False
+            self._next_run = current + self._interval_seconds
+            try:
+                counts = cleanup()
+                if any(counts.values()):
+                    logger.info("auth_cleanup counts=%s", counts)
+            except SQLAlchemyError:
+                logger.exception("auth_cleanup_failed")
+            return True
+        finally:
+            self._lock.release()
+
+
+auth_cleanup_throttle = AuthCleanupThrottle()
 
 
 def _rate_limit(request: Request, scope: str, limit: int, window_seconds: int) -> None:
@@ -337,10 +442,6 @@ def require_operator(x_admin_token: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
-def _operator_session_value() -> str:
-    return secrets.token_urlsafe(32)
-
-
 def _set_operator_session_cookie(response: Response, session_value: str) -> None:
     api_base_url = str(getattr(settings, "API_BASE_URL", "") or "").strip().lower()
     secure_cookie = api_base_url.startswith("https://") or bool(os.getenv("RAILWAY_ENVIRONMENT"))
@@ -361,8 +462,7 @@ def _onboarding_headers(response: Response) -> None:
 
 def require_operator_session(request: Request) -> None:
     session_value = request.cookies.get(OPERATOR_SESSION_COOKIE)
-    expected = getattr(request.app.state, "operator_session", None)
-    if not session_value or not expected or not secrets.compare_digest(str(session_value), str(expected)):
+    if not session_value or get_operator_session(session_value) is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 
@@ -394,6 +494,7 @@ def _tenant_public(tenant):
         features=tenant_public_features(tenant),
         bot_username=getattr(tenant, "bot_username", None),
         bot_enabled=getattr(tenant, "bot_enabled", None),
+        timezone=getattr(tenant, "timezone", None) or "Asia/Tashkent",
     )
 
 
@@ -442,6 +543,13 @@ def _assert_admin_access(admin: AdminAuthContext, tenant: Tenant) -> None:
 
 @app.middleware("http")
 async def admin_session_middleware(request: Request, call_next):
+    if (
+        request.cookies.get(ADMIN_SESSION_COOKIE)
+        or request.cookies.get(OPERATOR_SESSION_COOKIE)
+        or request.headers.get("x-admin-token")
+        or request.url.path.startswith(("/admin/auth/", "/api/onboarding/operator-"))
+    ):
+        auth_cleanup_throttle.maybe_cleanup()
     request.state.admin_session = None
     request.state.clear_admin_session_cookie = False
     session_token = request.cookies.get(ADMIN_SESSION_COOKIE)
@@ -478,12 +586,7 @@ def require_operator_or_admin(
         return AdminAuthContext(tenant_id=admin_session.tenant_id, source="session")
 
     operator_session = request.cookies.get(OPERATOR_SESSION_COOKIE)
-    expected_operator_session = getattr(request.app.state, "operator_session", None)
-    if (
-        operator_session
-        and expected_operator_session
-        and secrets.compare_digest(str(operator_session), str(expected_operator_session))
-    ):
+    if operator_session and get_operator_session(operator_session) is not None:
         return AdminAuthContext(tenant_id=None, source="operator")
 
     if x_admin_token == ADMIN_SECRET:
@@ -572,12 +675,39 @@ async def _validated_image(file: UploadFile) -> tuple[bytes, str]:
     return data, suffix
 
 
+def _atomic_write(destination: Path, data: bytes) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".upload-",
+            suffix=".tmp",
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except OSError as exc:
+                logger.warning(
+                    "partial_upload_cleanup_failed path=%s exception_type=%s",
+                    temporary_path,
+                    type(exc).__name__,
+                )
+
+
 async def _save_menu_image_file(slug: str, file: UploadFile) -> tuple[str, str]:
     data, suffix = await _validated_image(file)
     filename = f"{uuid.uuid4().hex}{suffix}"
     folder = _menu_image_dir(slug)
     destination = folder / filename
-    destination.write_bytes(data)
+    await asyncio.to_thread(_atomic_write, destination, data)
     image_path = f"{slug}/{filename}"
     image_url = f"{_menu_images_url_prefix(slug)}{filename}"
     return image_path, image_url
@@ -587,8 +717,52 @@ async def _save_hero_image_file(slug: str, file: UploadFile) -> str:
     data, suffix = await _validated_image(file)
     filename = f"{uuid.uuid4().hex}{suffix}"
     destination = _upload_dir(slug, "hero") / filename
-    destination.write_bytes(data)
+    await asyncio.to_thread(_atomic_write, destination, data)
     return f"{_uploads_url_prefix(slug, 'hero')}{filename}"
+
+
+def _managed_menu_image_file(image_path: str | None, slug: str) -> Path | None:
+    normalized = str(image_path or "").strip().strip("/")
+    parts = Path(normalized).parts
+    if len(parts) != 2 or parts[0] != slug or ".." in parts:
+        return None
+    root = MENU_IMAGES_DIR.resolve()
+    tenant_root = (root / slug).resolve()
+    target = (tenant_root / parts[1]).resolve()
+    if target.parent != tenant_root or root not in target.parents:
+        return None
+    return target
+
+
+def _managed_upload_file(upload_url: str | None, slug: str, kind: str) -> Path | None:
+    value = str(upload_url or "").strip()
+    prefix = _uploads_url_prefix(slug, kind)
+    if not value.startswith(prefix):
+        return None
+    filename = unquote(value[len(prefix):])
+    if not filename or len(Path(filename).parts) != 1 or ".." in Path(filename).parts:
+        return None
+    root = UPLOADS_DIR.resolve()
+    tenant_root = (root / slug / kind).resolve()
+    target = (tenant_root / filename).resolve()
+    if target.parent != tenant_root or root not in target.parents:
+        return None
+    return target
+
+
+def _delete_managed_file(path: Path | None, *, event: str, tenant_slug: str) -> None:
+    if path is None or not path.is_file():
+        return
+    try:
+        path.unlink()
+    except OSError as exc:
+        logger.warning(
+            "managed_file_delete_failed event=%s tenant=%s path=%s exception_type=%s",
+            event,
+            tenant_slug,
+            path,
+            type(exc).__name__,
+        )
 
 
 def _validate_menu_image_path(image_path: str | None, slug: str) -> str | None:
@@ -619,12 +793,21 @@ def run_migrations() -> None:
 @app.on_event("startup")
 async def startup_checks():
     run_migrations()
+    cleanup_counts = cleanup_expired_auth_records()
+    auth_cleanup_throttle.defer()
+    if any(cleanup_counts.values()):
+        logger.info("auth_cleanup counts=%s", cleanup_counts)
     try:
         with get_session() as session:
             count = session.execute(select(func.count(Tenant.id))).scalar_one()
         logger.info("tenant_count=%s", count)
     except SQLAlchemyError:
         logger.exception("tenant_count check failed during startup")
+
+
+@app.on_event("shutdown")
+async def shutdown_clients():
+    await close_bot_cache()
 
 
 @app.get("/", include_in_schema=False)
@@ -670,9 +853,18 @@ def onboarding_operator_login(payload: OperatorLoginRequest, response: Response,
     _rate_limit(request, "operator-login", 10, 300)
     if not secrets.compare_digest(str(payload.secret or ""), str(ADMIN_SECRET)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-    session_value = _operator_session_value()
-    app.state.operator_session = session_value
+    session_value = create_operator_session()
     _set_operator_session_cookie(response, session_value)
+    _onboarding_headers(response)
+    return {"ok": True}
+
+
+@app.post("/api/onboarding/operator-logout")
+def onboarding_operator_logout(request: Request, response: Response):
+    session_value = request.cookies.get(OPERATOR_SESSION_COOKIE)
+    if session_value:
+        revoke_operator_session(session_value)
+    response.delete_cookie(key=OPERATOR_SESSION_COOKIE, path="/", samesite="Lax")
     _onboarding_headers(response)
     return {"ok": True}
 
@@ -744,7 +936,8 @@ def onboarding_create_tenant(payload: OnboardingTenantRequest, response: Respons
         bot_token=bot_token or None,
         bot_username=bot_username,
         bot_enabled=enable_bot,
-        features={"plan": plan},
+        timezone_name=payload.timezone,
+        features={"plan": plan, "reservations": plan in {"standard", "vip"}},
         category_titles=categories,
     )
     tenant = get_tenant_by_slug(normalized_slug)
@@ -800,11 +993,8 @@ def admin_auth_login(payload: AdminLoginRequest, response: Response, request: Re
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
 
     tenant: Tenant | None = None
-    login_token = get_admin_login_token(raw_token)
-    if login_token is not None:
-        consumed_tenant_id = consume_admin_login_token(raw_token)
-        if consumed_tenant_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin token")
+    consumed_tenant_id = consume_admin_login_token_for_slug(raw_token, normalized_slug)
+    if consumed_tenant_id is not None:
         with get_session() as session:
             tenant = session.execute(
                 select(Tenant).where(Tenant.id == consumed_tenant_id, Tenant.is_active.is_(True))
@@ -824,6 +1014,15 @@ def admin_auth_login(payload: AdminLoginRequest, response: Response, request: Re
     admin_session = create_admin_session(tenant.id)
     _set_admin_session_cookie(response, admin_session.session_token)
     return {"ok": True, "tenant_slug": tenant.slug, "expires_at": admin_session.expires_at.isoformat()}
+
+
+@app.post("/admin/auth/logout")
+def admin_auth_logout(request: Request, response: Response):
+    session_token = request.cookies.get(ADMIN_SESSION_COOKIE)
+    if session_token:
+        revoke_admin_session(session_token)
+    _clear_admin_session_cookie(response)
+    return {"ok": True}
 
 
 @app.get("/t/{slug}/categories")
@@ -922,6 +1121,9 @@ async def upload_menu_image_admin(
 @app.patch("/t/{slug}/api/admin/tenant", response_model=TenantPublic)
 def admin_update_tenant(slug: str, payload: TenantAdminUpdate, tenant=Depends(_admin_tenant_dep)):
     update_data = payload.model_dump(exclude_unset=True)
+    old_hero_image = None
+    if "hero_image" in update_data and isinstance(tenant.features, dict):
+        old_hero_image = tenant.features.get("hero_image")
     hero_image = update_data.get("hero_image")
     if hero_image and not _is_tenant_upload_url(hero_image, tenant.slug, kind="hero"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "hero_image must point to this tenant hero upload path")
@@ -938,12 +1140,20 @@ def admin_update_tenant(slug: str, payload: TenantAdminUpdate, tenant=Depends(_a
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Tenant not found")
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    new_hero_image = updated.features.get("hero_image") if isinstance(updated.features, dict) else None
+    if old_hero_image and old_hero_image != new_hero_image and old_hero_image != updated.logo_url:
+        _delete_managed_file(
+            _managed_upload_file(old_hero_image, tenant.slug, "hero"),
+            event="hero_replaced",
+            tenant_slug=tenant.slug,
+        )
     return _tenant_public(updated)
 
 
 @app.patch("/t/{slug}/api/admin/menu-items/{item_id}")
 def admin_update_menu_item(slug: str, item_id: int, payload: MenuItemAdminUpdate, tenant=Depends(_admin_tenant_dep)):
     update_data = payload.model_dump(exclude_unset=True)
+    old_image_path = get_menu_item_image_path_for_tenant(tenant, item_id)
     image_url = update_data.get("image_url")
     if image_url and not _is_tenant_menu_image_url(image_url, tenant.slug):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "image_url must point to this tenant menu image path")
@@ -953,6 +1163,12 @@ def admin_update_menu_item(slug: str, item_id: int, payload: MenuItemAdminUpdate
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except NoResultFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    if old_image_path and old_image_path != item.image_path and not menu_image_path_in_use(tenant, old_image_path):
+        _delete_managed_file(
+            _managed_menu_image_file(old_image_path, tenant.slug),
+            event="menu_image_replaced",
+            tenant_slug=tenant.slug,
+        )
     return serialize_menu_item(item)
 
 
@@ -995,12 +1211,19 @@ def admin_menu_update(
     _assert_admin_access(admin, tenant_obj)
     data = payload.model_dump()
     data["image_path"] = _validate_menu_image_path(data.get("image_path"), tenant_obj.slug)
+    old_image_path = get_menu_item_image_path_for_tenant(tenant_obj, item_id)
     try:
         item = update_menu_item_for_tenant(tenant_obj, item_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except NoResultFound:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    if old_image_path and old_image_path != item.image_path and not menu_image_path_in_use(tenant_obj, old_image_path):
+        _delete_managed_file(
+            _managed_menu_image_file(old_image_path, tenant_obj.slug),
+            event="menu_image_replaced",
+            tenant_slug=tenant_obj.slug,
+        )
     return serialize_menu_item(item)
 
 
@@ -1012,9 +1235,16 @@ def admin_menu_delete(
 ):
     tenant_obj = _admin_tenant_lookup(tenant)
     _assert_admin_access(admin, tenant_obj)
+    old_image_path = get_menu_item_image_path_for_tenant(tenant_obj, item_id)
     ok = delete_menu_item_for_tenant(tenant_obj, item_id)
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Menu item not found")
+    if old_image_path and not menu_image_path_in_use(tenant_obj, old_image_path):
+        _delete_managed_file(
+            _managed_menu_image_file(old_image_path, tenant_obj.slug),
+            event="menu_item_deleted",
+            tenant_slug=tenant_obj.slug,
+        )
     return {"ok": True}
 
 
@@ -1023,6 +1253,7 @@ async def create_order_by_slug(
     slug: str,
     order: OrderIn,
     request: Request,
+    background_tasks: BackgroundTasks,
     x_internal_token: str | None = Header(default=None),
     tenant=Depends(_tenant_dep),
 ):
@@ -1037,7 +1268,8 @@ async def create_order_by_slug(
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     logger.info("[TENANT=%s] Order created id=%s", slug, oid)
-    await best_effort_notify(
+    background_tasks.add_task(
+        best_effort_notify,
         lambda: notify_admin(oid, tenant.id),
         event="order_created",
         tenant_id=tenant.id,
@@ -1052,6 +1284,7 @@ async def create_reservation_api(
     slug: str,
     reservation: ReservationIn,
     request: Request,
+    background_tasks: BackgroundTasks,
     tenant=Depends(_tenant_dep),
 ):
     _rate_limit(request, f"create-reservation:{slug}", 15, 60)
@@ -1059,8 +1292,12 @@ async def create_reservation_api(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Plan does not include reservations")
     if not tenant_has_feature(tenant, "reservations"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Feature disabled")
-    rid = create_reservation(tenant, reservation.model_dump())
-    await best_effort_notify(
+    try:
+        rid = create_reservation(tenant, reservation.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    background_tasks.add_task(
+        best_effort_notify,
         lambda: notify_reservation_created(tenant, rid),
         event="reservation_created",
         tenant_id=tenant.id,

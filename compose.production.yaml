@@ -1,6 +1,53 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-qadam}
+      POSTGRES_USER: ${POSTGRES_USER:-qadam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the VPS environment}
+    volumes:
+      - qadam_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qadam} -d ${POSTGRES_DB:-qadam}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app_internal
+
   api:
+    extends:
+      file: compose.yaml
+      service: api
     ports: !reset []
+    environment:
+      APP_ENV: production
+      ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET in the VPS environment}
+      API_BASE_URL: ${API_BASE_URL:?Set API_BASE_URL in the VPS environment}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-qadam}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-qadam}
+      FORWARDED_ALLOW_IPS: 127.0.0.1,172.30.0.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      app_internal:
+      caddy_api:
+        ipv4_address: 172.30.0.3
+
+  bot:
+    extends:
+      file: compose.yaml
+      service: bot
+    environment:
+      APP_ENV: production
+      ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET in the VPS environment}
+      API_BASE_URL: ${API_BASE_URL:?Set API_BASE_URL in the VPS environment}
+      QADAM_API_BASE_URL: http://api:8000
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-qadam}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-qadam}
+    networks:
+      - app_internal
 
   caddy:
     image: caddy:2.8-alpine
@@ -18,7 +65,19 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      caddy_api:
+        ipv4_address: 172.30.0.2
+
+networks:
+  app_internal:
+  caddy_api:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/29
 
 volumes:
+  qadam_data:
+  qadam_postgres_data:
   caddy_data:
   caddy_config:

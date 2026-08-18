@@ -1,0 +1,3 @@
+from finding_regression import run_finding, scenario_reservation_status_validation
+
+run_finding("reservation status validation", scenario_reservation_status_validation)

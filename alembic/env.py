@@ -19,7 +19,9 @@ config = context.config
 config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL", "sqlite:///./qadam_demo.db"))
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Migrations also run inside FastAPI startup. Preserve application loggers
+    # so notification and request failures remain visible after Alembic runs.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

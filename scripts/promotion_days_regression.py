@@ -1,0 +1,3 @@
+from finding_regression import run_finding, scenario_days_of_week_validation
+
+run_finding("days_of_week validation", scenario_days_of_week_validation)

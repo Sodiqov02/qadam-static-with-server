@@ -12,6 +12,17 @@ depends_on = None
 
 def upgrade() -> None:
     connection = op.get_bind()
+    # Alembic creates version_num as VARCHAR(32), but this revision identifier
+    # is longer. SQLite does not enforce that width; PostgreSQL does and must
+    # be widened before Alembic records this revision after upgrade().
+    if connection.dialect.name != "sqlite":
+        op.alter_column(
+            "alembic_version",
+            "version_num",
+            existing_type=sa.String(length=32),
+            type_=sa.String(length=64),
+            existing_nullable=False,
+        )
     inspector = sa.inspect(connection)
     columns = {column["name"] for column in inspector.get_columns("menu_items")}
     if "description" not in columns:

@@ -14,7 +14,13 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable not set")
 
 DEV_ADMIN_SECRET = "dev_only_admin_secret"
-UNSAFE_ADMIN_SECRETS = {"", "change_me", DEV_ADMIN_SECRET}
+MIN_PRODUCTION_ADMIN_SECRET_LENGTH = 24
+UNSAFE_ADMIN_SECRETS = {
+    "",
+    "change_me",
+    "replace_with_strong_random_secret",
+    DEV_ADMIN_SECRET,
+}
 
 
 def _is_production_like() -> bool:
@@ -33,8 +39,13 @@ def _admin_secret_from_env() -> str:
     # Production must fail fast instead of silently accepting a known default.
     # Local development keeps a clearly named fallback so old dev commands still boot.
     raw_secret = (os.getenv("ADMIN_SECRET") or "").strip()
-    if _is_production_like() and raw_secret in UNSAFE_ADMIN_SECRETS:
-        raise RuntimeError("ADMIN_SECRET must be set to a strong secret in production")
+    if _is_production_like() and (
+        raw_secret in UNSAFE_ADMIN_SECRETS or len(raw_secret) < MIN_PRODUCTION_ADMIN_SECRET_LENGTH
+    ):
+        raise RuntimeError(
+            f"ADMIN_SECRET must be set to a non-placeholder value of at least "
+            f"{MIN_PRODUCTION_ADMIN_SECRET_LENGTH} characters in production"
+        )
     return raw_secret or DEV_ADMIN_SECRET
 
 

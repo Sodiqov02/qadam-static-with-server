@@ -10,6 +10,7 @@ from src.db_models import Tenant
 from src.store import get_menu_for_tenant, get_order, list_reservations, tenant_has_plan
 
 _bot_cache: dict[str, Bot] = {}
+_tenant_tokens: dict[int, str] = {}
 logger = logging.getLogger(__name__)
 
 
@@ -46,21 +47,63 @@ async def best_effort_notify(
         )
 
 
-def _get_bot_for_tenant(tenant: Tenant | None) -> Optional[Bot]:
+async def _release_cached_token(token: str) -> None:
+    if token in _tenant_tokens.values():
+        return
+    bot = _bot_cache.pop(token, None)
+    if bot is not None:
+        await bot.session.close()
+
+
+async def release_tenant_bot(tenant_id: int) -> None:
+    token = _tenant_tokens.pop(int(tenant_id), None)
+    if not token:
+        return
+    try:
+        await _release_cached_token(token)
+    except Exception as exc:
+        logger.exception(
+            "tenant_bot_cache_close_failed tenant_id=%s exception_type=%s",
+            tenant_id,
+            type(exc).__name__,
+        )
+
+
+async def _get_bot_for_tenant(tenant: Tenant | None) -> Optional[Bot]:
     if not tenant:
         return None
+    tenant_id = int(tenant.id)
+    if not getattr(tenant, "bot_enabled", False):
+        await release_tenant_bot(tenant_id)
+        return None
     token = getattr(tenant, "bot_token", None)
+    previous_token = _tenant_tokens.get(tenant_id)
+    if previous_token and previous_token != token:
+        await release_tenant_bot(tenant_id)
     if not token:
         return None
+    _tenant_tokens[tenant_id] = token
     if token in _bot_cache:
         return _bot_cache[token]
     try:
         bot = Bot(token=token, default=DefaultBotProperties(parse_mode=None))
     except TokenValidationError:
+        _tenant_tokens.pop(tenant_id, None)
         logger.exception("bot_token_invalid_for_notifications")
         return None
     _bot_cache[token] = bot
     return bot
+
+
+async def close_bot_cache() -> None:
+    bots = list(_bot_cache.values())
+    _bot_cache.clear()
+    _tenant_tokens.clear()
+    for bot in bots:
+        try:
+            await bot.session.close()
+        except Exception as exc:
+            logger.exception("bot_cache_close_failed exception_type=%s", type(exc).__name__)
 
 
 async def _safe_send(bot: Bot | None, chat_id: int, text: str) -> None:
@@ -140,7 +183,7 @@ async def notify_admin(order_id: int, tenant_id: int):
     )
     chat_id = _resolve_admin_chat_id(tenant)
     if chat_id:
-        bot = _get_bot_for_tenant(tenant)
+        bot = await _get_bot_for_tenant(tenant)
         await _safe_send(bot, int(chat_id), text)
 
 
@@ -165,7 +208,7 @@ async def notify_reservation_created(tenant: Tenant, rid: int):
             f"Table: {r.get('table_id','')}\n"
         )
 
-    bot = _get_bot_for_tenant(tenant)
+    bot = await _get_bot_for_tenant(tenant)
     await _safe_send(bot, int(chat_id), text)
 
 
@@ -189,7 +232,7 @@ async def notify_reservation_updated(tenant: Tenant, rid: int):
             f"DateTime: {r.get('datetime','')}\n"
         )
 
-    bot = _get_bot_for_tenant(tenant)
+    bot = await _get_bot_for_tenant(tenant)
     await _safe_send(bot, int(chat_id), text)
 
 
@@ -213,5 +256,5 @@ async def notify_order_status_changed(
         return
     old_text = f" (was {old_status})" if old_status else ""
     text = f"Your order #{order_id} status is now {new_status}.{old_text}"
-    bot = _get_bot_for_tenant(tenant)
+    bot = await _get_bot_for_tenant(tenant)
     await _safe_send(bot, int(chat_id), text)

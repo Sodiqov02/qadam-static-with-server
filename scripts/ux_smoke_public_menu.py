@@ -1231,24 +1231,26 @@ def main() -> int:
     parser.add_argument("--onboarding", action="store_true", help="Run assisted onboarding UX checks.")
     args = parser.parse_args()
 
-    try:
-        if args.branding:
-            issues = run_branding_smoke(args.url, args.screenshots)
-        elif args.onboarding:
-            issues = run_onboarding_smoke(args.url, args.screenshots)
-        elif args.admin_flow:
-            issues = run_admin_flow_smoke(args.url, args.screenshots)
-        elif args.order_flow:
-            issues = run_order_flow_smoke(args.url, args.screenshots)
-        elif args.loading_error:
-            issues = run_loading_error_smoke(args.url, args.screenshots)
-        elif args.edge:
-            issues = run_edge_smoke(args.url, args.screenshots)
-        else:
-            issues = run_smoke(args.url, args.screenshots)
-    except PlaywrightTimeoutError as exc:
-        print(json.dumps({"url": args.url, "issues": [f"timeout: {exc}"]}, indent=2))
-        return 1
+    selected = [
+        ("branding", args.branding, run_branding_smoke),
+        ("onboarding", args.onboarding, run_onboarding_smoke),
+        ("admin-flow", args.admin_flow, run_admin_flow_smoke),
+        ("order-flow", args.order_flow, run_order_flow_smoke),
+        ("loading-error", args.loading_error, run_loading_error_smoke),
+        ("edge", args.edge, run_edge_smoke),
+    ]
+    suites = [(name, runner) for name, enabled, runner in selected if enabled]
+    if not suites:
+        suites = [("default", run_smoke)]
+
+    issues = []
+    for name, runner in suites:
+        print(json.dumps({"suite": name, "status": "started"}))
+        try:
+            suite_issues = runner(args.url, args.screenshots)
+        except PlaywrightTimeoutError as exc:
+            suite_issues = [f"timeout: {exc}"]
+        issues.extend(f"{name}: {issue}" for issue in suite_issues)
 
     return 1 if issues else 0
 

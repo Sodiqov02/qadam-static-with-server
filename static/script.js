@@ -892,6 +892,10 @@
         adminLink.style.display = "";
       }
     }
+    if (ordersLink) {
+      ordersLink.style.display = "none";
+      ordersLink.removeAttribute("href");
+    }
 
     const botUsername = (data.bot_username || "").replace(/^@+/, "");
     const botUsernameValid = /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(botUsername);

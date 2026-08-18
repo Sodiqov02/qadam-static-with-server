@@ -32,6 +32,8 @@ data/menu_images/
 *.err
 run_*.out
 run_*.err
+.cloudflared.pid
+.server.pid
 
 .DS_Store
 Thumbs.db

@@ -34,6 +34,7 @@ class Tenant(Base):
     primary_color = Column(String(16), nullable=True)
     accent_color = Column(String(16), nullable=True)
     theme_mode = Column(String(32), nullable=False, default="default")
+    timezone = Column(String(64), nullable=False, default="Asia/Tashkent")
     features = Column(JSON, nullable=False, default=dict)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
@@ -161,3 +162,12 @@ class AdminSession(Base):
     session_token = Column(String(255), nullable=False, unique=True, index=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
     expires_at = Column(DateTime, nullable=False)
+
+
+class OperatorSession(Base):
+    __tablename__ = "operator_sessions"
+
+    id = Column(Integer, primary_key=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=dt.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)

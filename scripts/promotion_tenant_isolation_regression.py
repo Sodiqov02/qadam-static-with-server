@@ -1,0 +1,3 @@
+from finding_regression import run_finding, scenario_promotion_tenant_isolation
+
+run_finding("promotion tenant isolation", scenario_promotion_tenant_isolation)

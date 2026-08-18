@@ -1,12 +1,15 @@
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import hashlib
 import logging
 import re
 import secrets
 from urllib.parse import quote, unquote
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.exc import NoResultFound
 
 from src.db import get_session
@@ -17,8 +20,10 @@ from src.db_models import (
     MenuCategory,
     MenuItem,
     Order,
+    OperatorSession,
     Promotion,
     Reservation,
+    Table,
     Tenant,
 )
 
@@ -28,6 +33,8 @@ HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 ORDER_STATUSES = ("NEW", "ACCEPTED", "COOKING", "READY", "COMPLETED", "CANCELED")
 COMPLETED_STATUSES = {"COMPLETED", "DONE", "APPROVED"}
 PROMOTION_TYPES = {"item_of_the_day", "happy_hours"}
+RESERVATION_STATUSES = ("new", "confirmed")
+DEFAULT_TENANT_TIMEZONE = "Asia/Tashkent"
 LEGACY_STATUS_MAP = {
     "new": "NEW",
     "approved": "ACCEPTED",
@@ -52,6 +59,23 @@ STATUS_TRANSITIONS = {
 logger = logging.getLogger(__name__)
 ADMIN_LOGIN_TOKEN_TTL_MINUTES = 10
 ADMIN_SESSION_TTL_DAYS = 7
+OPERATOR_SESSION_TTL_HOURS = 12
+
+
+@dataclass(frozen=True)
+class IssuedAdminLoginToken:
+    token: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
+class IssuedAdminSession:
+    session_token: str
+    expires_at: datetime
+
+
+def _auth_token_hash(token: str) -> str:
+    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 
 
 def _category_sort_value(category: MenuCategory) -> int:
@@ -59,6 +83,37 @@ def _category_sort_value(category: MenuCategory) -> int:
     if sort_order is None:
         sort_order = getattr(category, "sort", 0)
     return int(sort_order or 0)
+
+
+def normalize_reservation_status(value: object) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in RESERVATION_STATUSES:
+        raise ValueError("Invalid reservation status")
+    return normalized
+
+
+def normalize_days_of_week(value: object) -> list[int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("days_of_week must be list")
+    normalized: set[int] = set()
+    for day in value:
+        if type(day) is not int or day < 0 or day > 6:
+            raise ValueError("days_of_week values must be integers from 0 to 6")
+        normalized.add(day)
+    return sorted(normalized)
+
+
+def normalize_timezone_name(value: object) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("timezone is required")
+    try:
+        ZoneInfo(normalized)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError("Invalid IANA timezone") from exc
+    return normalized
 
 
 def _menu_image_url_from_path(image_path: str | None) -> str | None:
@@ -121,20 +176,20 @@ def get_tenant_by_bot_token(token: str) -> Optional[Tenant]:
         )
 
 
-def create_admin_login_token_for_tenant(tenant: Tenant, ttl_minutes: int = ADMIN_LOGIN_TOKEN_TTL_MINUTES) -> AdminLoginToken:
+def create_admin_login_token_for_tenant(
+    tenant: Tenant,
+    ttl_minutes: int = ADMIN_LOGIN_TOKEN_TTL_MINUTES,
+) -> IssuedAdminLoginToken:
     token = secrets.token_urlsafe(24)
     expires_at = datetime.utcnow() + timedelta(minutes=max(int(ttl_minutes), 1))
     with get_session() as session:
-        login_token = AdminLoginToken(
+        session.add(AdminLoginToken(
             tenant_id=tenant.id,
-            token=token,
+            token=_auth_token_hash(token),
             expires_at=expires_at,
             used=False,
-        )
-        session.add(login_token)
-        session.flush()
-        session.refresh(login_token)
-        return login_token
+        ))
+    return IssuedAdminLoginToken(token=token, expires_at=expires_at)
 
 
 def get_admin_login_token(token: str) -> Optional[AdminLoginToken]:
@@ -144,7 +199,9 @@ def get_admin_login_token(token: str) -> Optional[AdminLoginToken]:
 
     with get_session() as session:
         login_token = (
-            session.execute(select(AdminLoginToken).where(AdminLoginToken.token == normalized))
+            session.execute(
+                select(AdminLoginToken).where(AdminLoginToken.token == _auth_token_hash(normalized))
+            )
             .scalars()
             .first()
         )
@@ -166,10 +223,40 @@ def consume_admin_login_token(token: str) -> Optional[int]:
         tenant_id = session.execute(
             update(AdminLoginToken)
             .where(
-                AdminLoginToken.token == normalized,
+                AdminLoginToken.token == _auth_token_hash(normalized),
                 AdminLoginToken.used.is_(False),
                 AdminLoginToken.expires_at > datetime.utcnow(),
             )
+            .values(used=True)
+            .returning(AdminLoginToken.tenant_id)
+        ).scalar_one_or_none()
+        return int(tenant_id) if tenant_id is not None else None
+
+
+def consume_admin_login_token_for_slug(token: str, slug: str | None) -> Optional[int]:
+    normalized_token = str(token or "").strip()
+    normalized_slug = str(slug or "").strip()
+    if not normalized_token:
+        return None
+
+    conditions = [
+        AdminLoginToken.token == _auth_token_hash(normalized_token),
+        AdminLoginToken.used.is_(False),
+        AdminLoginToken.expires_at > datetime.utcnow(),
+    ]
+    if normalized_slug:
+        conditions.append(
+            AdminLoginToken.tenant_id.in_(
+                select(Tenant.id).where(
+                    Tenant.slug == normalized_slug,
+                )
+            )
+        )
+
+    with get_session() as session:
+        tenant_id = session.execute(
+            update(AdminLoginToken)
+            .where(*conditions)
             .values(used=True)
             .returning(AdminLoginToken.tenant_id)
         ).scalar_one_or_none()
@@ -186,19 +273,16 @@ def mark_admin_login_token_used(token_id: int) -> bool:
         return bool(updated.rowcount)
 
 
-def create_admin_session(tenant_id: int, ttl_days: int = ADMIN_SESSION_TTL_DAYS) -> AdminSession:
+def create_admin_session(tenant_id: int, ttl_days: int = ADMIN_SESSION_TTL_DAYS) -> IssuedAdminSession:
     session_token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(days=max(int(ttl_days), 1))
     with get_session() as session:
-        admin_session = AdminSession(
+        session.add(AdminSession(
             tenant_id=tenant_id,
-            session_token=session_token,
+            session_token=_auth_token_hash(session_token),
             expires_at=expires_at,
-        )
-        session.add(admin_session)
-        session.flush()
-        session.refresh(admin_session)
-        return admin_session
+        ))
+    return IssuedAdminSession(session_token=session_token, expires_at=expires_at)
 
 
 def get_admin_session(session_token: str) -> Optional[AdminSession]:
@@ -207,7 +291,9 @@ def get_admin_session(session_token: str) -> Optional[AdminSession]:
         return None
     with get_session() as session:
         admin_session = (
-            session.execute(select(AdminSession).where(AdminSession.session_token == normalized))
+            session.execute(
+                select(AdminSession).where(AdminSession.session_token == _auth_token_hash(normalized))
+            )
             .scalars()
             .first()
         )
@@ -218,11 +304,93 @@ def get_admin_session(session_token: str) -> Optional[AdminSession]:
         return admin_session
 
 
+def create_operator_session(ttl_hours: int = OPERATOR_SESSION_TTL_HOURS) -> str:
+    session_token = secrets.token_urlsafe(32)
+    expires_at = datetime.utcnow() + timedelta(hours=max(int(ttl_hours), 1))
+    with get_session() as session:
+        session.add(
+            OperatorSession(
+                token_hash=_auth_token_hash(session_token),
+                expires_at=expires_at,
+            )
+        )
+    return session_token
+
+
+def get_operator_session(session_token: str) -> Optional[OperatorSession]:
+    normalized = str(session_token or "").strip()
+    if not normalized:
+        return None
+    with get_session() as session:
+        return session.execute(
+            select(OperatorSession).where(
+                OperatorSession.token_hash == _auth_token_hash(normalized),
+                OperatorSession.expires_at > datetime.utcnow(),
+            )
+        ).scalar_one_or_none()
+
+
+def revoke_admin_session(session_token: str) -> bool:
+    normalized = str(session_token or "").strip()
+    if not normalized:
+        return False
+    with get_session() as session:
+        result = session.execute(
+            delete(AdminSession).where(AdminSession.session_token == _auth_token_hash(normalized))
+        )
+        return bool(result.rowcount)
+
+
+def revoke_operator_session(session_token: str) -> bool:
+    normalized = str(session_token or "").strip()
+    if not normalized:
+        return False
+    with get_session() as session:
+        result = session.execute(
+            delete(OperatorSession).where(
+                OperatorSession.token_hash == _auth_token_hash(normalized)
+            )
+        )
+        return bool(result.rowcount)
+
+
+def cleanup_expired_auth_records(now: datetime | None = None) -> dict[str, int]:
+    cutoff = now or datetime.utcnow()
+    used_token_cutoff = cutoff - timedelta(days=1)
+    with get_session() as session:
+        admin_sessions = session.execute(
+            delete(AdminSession).where(AdminSession.expires_at <= cutoff)
+        ).rowcount
+        operator_sessions = session.execute(
+            delete(OperatorSession).where(OperatorSession.expires_at <= cutoff)
+        ).rowcount
+        login_tokens = session.execute(
+            delete(AdminLoginToken).where(
+                or_(
+                    AdminLoginToken.expires_at <= cutoff,
+                    and_(
+                        AdminLoginToken.used.is_(True),
+                        AdminLoginToken.created_at <= used_token_cutoff,
+                    ),
+                )
+            )
+        ).rowcount
+    return {
+        "admin_sessions": int(admin_sessions or 0),
+        "operator_sessions": int(operator_sessions or 0),
+        "login_tokens": int(login_tokens or 0),
+    }
+
+
 def list_enabled_bot_tenants() -> List[Tenant]:
     with get_session() as session:
         return (
             session.execute(
-                select(Tenant).where(Tenant.bot_enabled.is_(True), Tenant.bot_token.is_not(None))
+                select(Tenant).where(
+                    Tenant.is_active.is_(True),
+                    Tenant.bot_enabled.is_(True),
+                    Tenant.bot_token.is_not(None),
+                )
             )
             .scalars()
             .all()
@@ -247,10 +415,12 @@ def bootstrap_tenant(
     bot_token: str | None,
     bot_username: str | None,
     bot_enabled: bool,
+    timezone_name: str | None = None,
     features: Dict[str, Any] | None = None,
     category_titles: Iterable[str] | None = None,
 ) -> Dict[str, Any]:
     feature_flags = features or {}
+    normalized_timezone = normalize_timezone_name(timezone_name or DEFAULT_TENANT_TIMEZONE)
     normalized_categories = [x.strip() for x in (category_titles or []) if isinstance(x, str) and x.strip()]
     if not normalized_categories:
         normalized_categories = ["Main"]
@@ -266,6 +436,7 @@ def bootstrap_tenant(
                 bot_token=bot_token,
                 bot_username=bot_username,
                 bot_enabled=bot_enabled,
+                timezone=normalized_timezone,
                 features=feature_flags,
                 is_active=True,
             )
@@ -279,6 +450,8 @@ def bootstrap_tenant(
             if bot_username is not None:
                 tenant.bot_username = bot_username
             tenant.bot_enabled = bot_enabled
+            if timezone_name is not None:
+                tenant.timezone = normalized_timezone
             merged_features: Dict[str, Any] = {}
             if isinstance(tenant.features, dict):
                 merged_features.update(tenant.features)
@@ -652,6 +825,32 @@ def get_menu_item_map_for_tenant(tenant: Tenant, item_ids: Iterable[str | int]) 
     }
 
 
+def get_menu_item_image_path_for_tenant(tenant: Tenant, item_id: int) -> str | None:
+    with get_session() as session:
+        return session.execute(
+            select(MenuItem.image_path).where(
+                MenuItem.tenant_id == tenant.id,
+                MenuItem.id == item_id,
+            )
+        ).scalar_one_or_none()
+
+
+def menu_image_path_in_use(tenant: Tenant, image_path: str) -> bool:
+    normalized = str(image_path or "").strip()
+    if not normalized:
+        return False
+    with get_session() as session:
+        return (
+            session.execute(
+                select(func.count(MenuItem.id)).where(
+                    MenuItem.tenant_id == tenant.id,
+                    MenuItem.image_path == normalized,
+                )
+            ).scalar_one()
+            > 0
+        )
+
+
 def create_menu_item_for_tenant(tenant: Tenant, payload: Dict[str, Any]) -> MenuItem:
     with get_session() as session:
         name = str(payload.get("name") or "").strip()
@@ -726,10 +925,22 @@ def serialize_promotion(promo: Promotion) -> Dict[str, Any]:
     }
 
 
-def active_promotions_for_tenant(tenant: Tenant) -> List[Promotion]:
-    now = datetime.utcnow()
-    weekday = now.weekday()
-    now_time = now.time()
+def active_promotions_for_tenant(
+    tenant: Tenant,
+    now_utc: datetime | None = None,
+) -> List[Promotion]:
+    timezone_name = getattr(tenant, "timezone", None) or DEFAULT_TENANT_TIMEZONE
+    try:
+        tenant_zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        logger.warning("invalid_tenant_timezone tenant=%s timezone=%s", tenant.slug, timezone_name)
+        tenant_zone = ZoneInfo(DEFAULT_TENANT_TIMEZONE)
+    current_utc = now_utc or datetime.now(timezone.utc)
+    if current_utc.tzinfo is None:
+        current_utc = current_utc.replace(tzinfo=timezone.utc)
+    local_now = current_utc.astimezone(tenant_zone)
+    weekday = local_now.weekday()
+    now_time = local_now.time().replace(tzinfo=None)
     promos = list_promotions(tenant, include_inactive=False)
     active = []
     for promo in promos:
@@ -752,20 +963,28 @@ def create_promotion(tenant: Tenant, payload: Dict[str, Any]) -> Promotion:
         discount = int(discount)
         if discount < 0 or discount > 100:
             raise ValueError("Invalid discount percent")
-    days = payload.get("days_of_week")
-    if days is not None and not isinstance(days, list):
-        raise ValueError("days_of_week must be list")
-    promo = Promotion(
-        tenant_id=tenant.id,
-        type=promo_type,
-        is_active=bool(payload.get("is_active", True)),
-        product_id=payload.get("product_id"),
-        discount_percent=discount,
-        start_time=payload.get("start_time"),
-        end_time=payload.get("end_time"),
-        days_of_week=days,
-    )
+    days = normalize_days_of_week(payload.get("days_of_week"))
     with get_session() as session:
+        product_id = payload.get("product_id")
+        if product_id is not None:
+            product = session.execute(
+                select(MenuItem).where(
+                    MenuItem.id == product_id,
+                    MenuItem.tenant_id == tenant.id,
+                )
+            ).scalar_one_or_none()
+            if product is None:
+                raise ValueError("Invalid product")
+        promo = Promotion(
+            tenant_id=tenant.id,
+            type=promo_type,
+            is_active=bool(payload.get("is_active", True)),
+            product_id=product_id,
+            discount_percent=discount,
+            start_time=payload.get("start_time"),
+            end_time=payload.get("end_time"),
+            days_of_week=days,
+        )
         session.add(promo)
         session.flush()
         session.refresh(promo)
@@ -790,8 +1009,18 @@ def update_promotion(tenant: Tenant, promo_id: int, payload: Dict[str, Any]) -> 
             promo.type = promo_type
         if "is_active" in payload:
             promo.is_active = bool(payload.get("is_active"))
+        product_id = payload.get("product_id") if "product_id" in payload else promo.product_id
+        if product_id is not None:
+            product = session.execute(
+                select(MenuItem).where(
+                    MenuItem.id == product_id,
+                    MenuItem.tenant_id == tenant.id,
+                )
+            ).scalar_one_or_none()
+            if product is None:
+                raise ValueError("Invalid product")
         if "product_id" in payload:
-            promo.product_id = payload.get("product_id")
+            promo.product_id = product_id
         if "discount_percent" in payload:
             discount = payload.get("discount_percent")
             if discount is not None:
@@ -804,10 +1033,7 @@ def update_promotion(tenant: Tenant, promo_id: int, payload: Dict[str, Any]) -> 
         if "end_time" in payload:
             promo.end_time = payload.get("end_time")
         if "days_of_week" in payload:
-            days = payload.get("days_of_week")
-            if days is not None and not isinstance(days, list):
-                raise ValueError("days_of_week must be list")
-            promo.days_of_week = days
+            promo.days_of_week = normalize_days_of_week(payload.get("days_of_week"))
         session.flush()
         session.refresh(promo)
         return promo
@@ -1067,6 +1293,8 @@ def update_tenant_public_profile(tenant: Tenant, payload: Dict[str, Any]) -> Ten
             tenant_db.accent_color = _normalize_brand_color(payload.get("accent_color"), "accent_color")
         if "theme_mode" in payload:
             tenant_db.theme_mode = _normalize_theme_mode(payload.get("theme_mode"))
+        if "timezone" in payload:
+            tenant_db.timezone = normalize_timezone_name(payload.get("timezone"))
 
         tenant_db.features = features
         session.flush()
@@ -1141,6 +1369,8 @@ def delete_menu_item_for_tenant(tenant: Tenant, item_id: int) -> bool:
         if not item:
             return False
         item.is_active = False
+        item.image_path = None
+        item.image_url = None
         session.flush()
         return True
 
@@ -1152,16 +1382,26 @@ def serialize_menu_item(item: MenuItem) -> Dict[str, Any]:
 def create_reservation(tenant: Tenant, payload: Dict[str, Any]) -> int:
     if not tenant_has_feature(tenant, "reservations"):
         raise PermissionError("Feature disabled")
-    res = Reservation(
-        tenant_id=tenant.id,
-        table_id=payload.get("table_id"),
-        name=payload.get("name"),
-        phone=payload.get("phone"),
-        datetime=payload.get("datetime"),
-        guests=payload.get("guests", 1),
-        status="new",
-    )
     with get_session() as session:
+        table_id = payload.get("table_id")
+        if table_id is not None:
+            table = session.execute(
+                select(Table).where(
+                    Table.id == table_id,
+                    Table.tenant_id == tenant.id,
+                )
+            ).scalar_one_or_none()
+            if table is None:
+                raise ValueError("Table not found")
+        res = Reservation(
+            tenant_id=tenant.id,
+            table_id=table_id,
+            name=payload.get("name"),
+            phone=payload.get("phone"),
+            datetime=payload.get("datetime"),
+            guests=payload.get("guests", 1),
+            status="new",
+        )
         session.add(res)
         session.flush()
         return res.id
@@ -1187,14 +1427,15 @@ def list_reservations(tenant: Tenant) -> List[Dict[str, Any]]:
 
 
 def update_reservation_status(tenant: Tenant, rid: int, status: str) -> bool:
+    normalized_status = normalize_reservation_status(status)
     with get_session() as session:
         res = session.execute(
             select(Reservation).where(Reservation.tenant_id == tenant.id, Reservation.id == rid)
         ).scalar_one_or_none()
         if not res:
             return False
-        res.status = status
-        logger.info("[TENANT=%s] Reservation status changed id=%s -> %s", tenant.slug, rid, status)
+        res.status = normalized_status
+        logger.info("[TENANT=%s] Reservation status changed id=%s -> %s", tenant.slug, rid, normalized_status)
         return True
 
 
@@ -1248,17 +1489,20 @@ def analytics_for_tenant(tenant: Tenant, range_key: str) -> dict:
             .order_by(Order.created_at.desc())
         ).scalars().all()
 
-    orders_count = len(orders)
+    qualifying_orders = [
+        order
+        for order in orders
+        if (normalize_status(order.status) or "NEW") in COMPLETED_STATUSES
+    ]
+    orders_count = len(qualifying_orders)
     revenue = Decimal(0)
-    for order in orders:
-        status = normalize_status(order.status) or "NEW"
-        if status in COMPLETED_STATUSES:
-            revenue += Decimal(order.total or 0)
+    for order in qualifying_orders:
+        revenue += Decimal(order.total or 0)
     avg_check = (revenue / orders_count) if orders_count else Decimal(0)
 
     price_map = _price_lookup(tenant)
     item_stats: Dict[str, Dict[str, Any]] = {}
-    for order in orders:
+    for order in qualifying_orders:
         for it in order.items or []:
             item_id = str(it.get("item_id"))
             qty = int(it.get("qty") or 0)

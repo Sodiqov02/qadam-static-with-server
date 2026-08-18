@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -49,6 +50,16 @@ def main() -> None:
                 "RAILWAY_ENVIRONMENT": "production",
                 "ADMIN_SECRET": DEV_ADMIN_SECRET,
             },
+            "example_placeholder": {
+                **common_env,
+                "APP_ENV": "production",
+                "ADMIN_SECRET": "replace_with_strong_random_secret",
+            },
+            "too_short": {
+                **common_env,
+                "APP_ENV": "production",
+                "ADMIN_SECRET": "short",
+            },
         }
         for label, env_updates in unsafe_cases.items():
             rejected = _run_config_import(env_updates)
@@ -58,6 +69,16 @@ def main() -> None:
         local = _run_config_import({**common_env, "ADMIN_SECRET": ""})
         if local.returncode != 0 or local.stdout.strip() != DEV_ADMIN_SECRET:
             issues.append("local config did not use the explicit dev fallback")
+
+        production = _run_config_import(
+            {
+                **common_env,
+                "APP_ENV": "production",
+                "ADMIN_SECRET": "production_sanity_secret_value",
+            }
+        )
+        if production.returncode != 0:
+            issues.append("production config rejected a non-placeholder strong ADMIN_SECRET")
 
         os.environ.update({**common_env, "ADMIN_SECRET": DEV_ADMIN_SECRET})
         from src.api_app import app
@@ -70,6 +91,8 @@ def main() -> None:
                     issues.append(f"/healthz returned {response.status_code}")
                 elif response.json() != {"status": "ok"}:
                     issues.append(f"/healthz returned unexpected body: {response.text}")
+                if logging.getLogger("src.notifier").disabled:
+                    issues.append("startup migrations disabled the notifier logger")
         finally:
             engine.dispose()
 
