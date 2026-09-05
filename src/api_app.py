@@ -33,9 +33,11 @@ from src.notifier import best_effort_notify, close_bot_cache, notify_admin
 from src.notifier import notify_order_status_changed, notify_reservation_created, notify_reservation_updated
 from src.store import (
     add_order,
+    add_order_idempotent,
     active_promotions_for_tenant,
     analytics_for_tenant,
     bootstrap_tenant,
+    checkout_fingerprint,
     cleanup_expired_auth_records,
     create_admin_session,
     create_admin_login_token_for_tenant,
@@ -54,6 +56,7 @@ from src.store import (
     get_tenant_by_slug,
     get_admin_session,
     get_operator_session,
+    IdempotencyConflictError,
     list_categories_for_tenant,
     list_reservations,
     list_promotions,
@@ -1255,6 +1258,7 @@ async def create_order_by_slug(
     request: Request,
     background_tasks: BackgroundTasks,
     x_internal_token: str | None = Header(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     tenant=Depends(_tenant_dep),
 ):
     _rate_limit(request, f"create-order:{slug}", 30, 60)
@@ -1263,19 +1267,35 @@ async def create_order_by_slug(
     order_data["source"] = "bot" if trusted_bot_request else "site"
     if not trusted_bot_request:
         order_data["customer_chat_id"] = None
+    normalized_key = idempotency_key.strip() if isinstance(idempotency_key, str) else None
+    normalized_key = normalized_key or None
+    if normalized_key is not None and len(normalized_key) > 255:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Idempotency-Key must not exceed 255 characters")
     try:
-        oid = add_order(order_data, tenant=tenant)
+        if normalized_key is None:
+            oid = add_order(order_data, tenant=tenant)
+            created = True
+        else:
+            oid, created = add_order_idempotent(
+                order_data,
+                tenant=tenant,
+                key=normalized_key,
+                fingerprint=checkout_fingerprint(order_data),
+            )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    logger.info("[TENANT=%s] Order created id=%s", slug, oid)
-    background_tasks.add_task(
-        best_effort_notify,
-        lambda: notify_admin(oid, tenant.id),
-        event="order_created",
-        tenant_id=tenant.id,
-        tenant_slug=slug,
-        order_id=oid,
-    )
+    if created:
+        logger.info("[TENANT=%s] Order created id=%s", slug, oid)
+        background_tasks.add_task(
+            best_effort_notify,
+            lambda: notify_admin(oid, tenant.id),
+            event="order_created",
+            tenant_id=tenant.id,
+            tenant_slug=slug,
+            order_id=oid,
+        )
     return OrderOut(order_id=oid)
 
 

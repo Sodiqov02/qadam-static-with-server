@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -10,7 +11,7 @@ from urllib.parse import quote, unquote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import and_, delete, func, or_, select, update
-from sqlalchemy.exc import NoResultFound
+from sqlalchemy.exc import IntegrityError, NoResultFound
 
 from src.db import get_session
 from src.db_models import (
@@ -1060,7 +1061,34 @@ def _apply_promotions(tenant: Tenant, subtotal: Decimal) -> Tuple[Decimal, List[
     return (subtotal - discount_total).quantize(Decimal("0.01")), applied
 
 
-def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
+class IdempotencyConflictError(ValueError):
+    pass
+
+
+def checkout_fingerprint(data: Dict[str, Any]) -> str:
+    customer = data.get("customer") or {}
+    logical_payload = {
+        "items": sorted(
+            [
+                {"item_id": str(item.get("item_id")), "qty": int(item.get("qty") or 0)}
+                for item in data.get("items", [])
+            ],
+            key=lambda item: item["item_id"],
+        ),
+        "customer": {
+            "name": customer.get("name"),
+            "phone": customer.get("phone"),
+            "address": customer.get("address"),
+            "comment": customer.get("comment"),
+        },
+        "source": data.get("source") or "site",
+        "customer_chat_id": data.get("customer_chat_id"),
+    }
+    encoded = json.dumps(logical_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _build_order(data: Dict[str, Any], tenant: Tenant) -> Order:
     price_map = _price_lookup(tenant)
     subtotal = Decimal(0)
     items_payload = []
@@ -1095,7 +1123,7 @@ def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
     if applied_promos:
         raw_payload["applied_promotions"] = applied_promos
 
-    order = Order(
+    return Order(
         tenant_id=tenant.id,
         source=data.get("source") or "site",
         status="NEW",
@@ -1107,11 +1135,50 @@ def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
         customer_chat_id=data.get("customer_chat_id"),
         raw_payload=raw_payload,
     )
+
+
+def add_order(data: Dict[str, Any], tenant: Tenant) -> int:
+    order = _build_order(data, tenant)
     with get_session() as session:
         session.add(order)
         session.flush()
         logger.info("[TENANT=%s] Order created id=%s source=%s", tenant.slug, order.id, order.source)
         return order.id
+
+
+def _idempotent_order(tenant_id: int, key: str) -> Optional[Order]:
+    with get_session() as session:
+        return session.execute(
+            select(Order).where(Order.tenant_id == tenant_id, Order.idempotency_key == key)
+        ).scalar_one_or_none()
+
+
+def add_order_idempotent(
+    data: Dict[str, Any], tenant: Tenant, key: str, fingerprint: str
+) -> Tuple[int, bool]:
+    existing = _idempotent_order(tenant.id, key)
+    if existing is not None:
+        if existing.idempotency_fingerprint != fingerprint:
+            raise IdempotencyConflictError("Idempotency key was already used with a different checkout")
+        return existing.id, False
+
+    order = _build_order(data, tenant)
+    order.idempotency_key = key
+    order.idempotency_fingerprint = fingerprint
+    try:
+        with get_session() as session:
+            session.add(order)
+            session.flush()
+            order_id = order.id
+        logger.info("[TENANT=%s] Order created id=%s source=%s", tenant.slug, order_id, order.source)
+        return order_id, True
+    except IntegrityError:
+        existing = _idempotent_order(tenant.id, key)
+        if existing is None:
+            raise
+        if existing.idempotency_fingerprint != fingerprint:
+            raise IdempotencyConflictError("Idempotency key was already used with a different checkout")
+        return existing.id, False
 
 
 def get_order(oid: int, tenant_id: int) -> Optional[Dict[str, Any]]:

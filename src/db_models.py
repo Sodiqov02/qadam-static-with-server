@@ -78,9 +78,14 @@ class MenuItem(Base):
 
 class Order(Base):
     __tablename__ = "orders"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_order_idempotency_per_tenant"),
+    )
 
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    idempotency_key = Column(String(255), nullable=True)
+    idempotency_fingerprint = Column(String(64), nullable=True)
     source = Column(String(32), nullable=False, default="site")
     status = Column(String(32), nullable=False, default="new")
     items = Column(JSON, nullable=False, default=list)

@@ -55,6 +55,18 @@
   let isCartLoading = false;
   let cartNotice = null;
   let isOrderSubmitting = false;
+  let pendingCheckout = null;
+
+  function newIdempotencyKey() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  function resetCheckoutAttempt() {
+    pendingCheckout = null;
+  }
 
   function extractSlug() {
     const slug = window.location.pathname.split("/")[2] || "";
@@ -531,6 +543,7 @@
     const current = cart.get(item.id) || { item, qty: 0 };
     current.qty += 1;
     cart.set(item.id, current);
+    resetCheckoutAttempt();
     cartNotice = null;
     setStatus("");
     saveCartState();
@@ -550,12 +563,14 @@
     } else {
       cart.set(id, current);
     }
+    resetCheckoutAttempt();
     saveCartState();
     renderCart();
   }
 
   function clearCart() {
     cart.clear();
+    resetCheckoutAttempt();
     cartNotice = null;
     saveCartState();
     renderCart();
@@ -563,6 +578,7 @@
 
   function removeFromCart(id) {
     cart.delete(id);
+    resetCheckoutAttempt();
     saveCartState();
     renderCart();
   }
@@ -999,11 +1015,18 @@
         setCartOpen(true);
         return;
       }
+      const serializedPayload = JSON.stringify(payload);
+      if (!pendingCheckout || pendingCheckout.payload !== serializedPayload) {
+        pendingCheckout = { payload: serializedPayload, key: newIdempotencyKey() };
+      }
       setSubmitState(true);
       const res = await fetch(tenantPath("/orders"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": pendingCheckout.key,
+        },
+        body: serializedPayload,
         credentials: "same-origin",
       });
       if (!res.ok) {
@@ -1011,6 +1034,7 @@
       }
       const data = await res.json();
       cart.clear();
+      resetCheckoutAttempt();
       saveCartState();
       orderForm.reset();
       setCartNotice(

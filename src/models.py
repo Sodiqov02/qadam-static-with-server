@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Literal, Optional
 
 class MenuItem(BaseModel):
@@ -47,6 +47,21 @@ class OrderIn(BaseModel):
     customer: Customer
     source: Literal["site", "bot"] = "site"
     customer_chat_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def normalize_item_quantities(self) -> "OrderIn":
+        quantities: dict[str, int] = {}
+        item_order: list[str] = []
+        for item in self.items:
+            if item.item_id not in quantities:
+                quantities[item.item_id] = 0
+                item_order.append(item.item_id)
+            quantities[item.item_id] += item.qty
+            if quantities[item.item_id] > 100:
+                raise ValueError("Combined item qty must not exceed 100")
+
+        self.items = [OrderItem(item_id=item_id, qty=quantities[item_id]) for item_id in item_order]
+        return self
 
 class OrderOut(BaseModel):
     order_id: int
