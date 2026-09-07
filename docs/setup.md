@@ -110,12 +110,13 @@ DATABASE_URL
 ADMIN_SECRET
 API_BASE_URL
 QADAM_API_BASE_URL
+PUBLIC_BASE_URL
 UPLOADS_DIR=/data/uploads
 MENU_IMAGES_DIR=/data/menu_images
 PORT
 ```
 
-`API_BASE_URL` is the public browser-facing origin. `QADAM_API_BASE_URL` is used by the bot for internal HTTP calls and defaults to `API_BASE_URL` for non-Docker local runs.
+`API_BASE_URL` is the browser-facing origin used by existing integrations. `PUBLIC_BASE_URL` is the required external HTTPS origin used for Telegram admin links. `QADAM_API_BASE_URL` is used by the bot for internal HTTP calls and defaults to `API_BASE_URL` for non-Docker local runs.
 
 Never commit `ADMIN_SECRET`, bot tokens, database URLs, or generated admin links.
 

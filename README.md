@@ -15,6 +15,8 @@
 Use `.env` (see `.env.example`):
 - `DATABASE_URL`
 - `API_BASE_URL`
+- `PUBLIC_BASE_URL` (external HTTPS origin used in browser/admin links)
+- `QADAM_API_BASE_URL` (internal API origin used by the bot worker)
 - `PORT`
 - `ADMIN_SECRET`
 - `UPLOADS_DIR`
@@ -36,6 +38,8 @@ Required production env vars:
 - `DATABASE_URL`: Railway PostgreSQL connection string
 - `ADMIN_SECRET`: strong random operator/admin secret
 - `API_BASE_URL`: public HTTPS base URL, for example `https://qadam.example.com`
+- `PUBLIC_BASE_URL`: public HTTPS origin used for Telegram admin links
+- `QADAM_API_BASE_URL`: internal API origin used by the bot (for example `http://api:8000` in Compose)
 - `UPLOADS_DIR`: persistent hero/logo upload directory, for example `/data/uploads`
 - `MENU_IMAGES_DIR`: persistent menu image directory, for example `/data/menu_images`
 - `PORT`: provided by Railway for the web process

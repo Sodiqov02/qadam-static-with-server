@@ -8,6 +8,7 @@ load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 QADAM_API_BASE_URL = os.getenv("QADAM_API_BASE_URL", API_BASE_URL)
+PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or "").strip().rstrip("/")
 PORT = int(os.getenv("PORT", "8000"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -49,13 +50,23 @@ def _admin_secret_from_env() -> str:
     return raw_secret or DEV_ADMIN_SECRET
 
 
+def _public_base_url_from_env() -> str:
+    if _is_production_like() and not PUBLIC_BASE_URL:
+        raise RuntimeError("PUBLIC_BASE_URL must be set to the public HTTPS origin in production")
+    if _is_production_like() and not PUBLIC_BASE_URL.lower().startswith("https://"):
+        raise RuntimeError("PUBLIC_BASE_URL must use HTTPS in production")
+    return PUBLIC_BASE_URL
+
+
 # Shared operator/admin secret for protected internal routes. Never log this value.
 ADMIN_SECRET = _admin_secret_from_env()
+PUBLIC_BASE_URL = _public_base_url_from_env()
 
 # Backward-compatible settings object used by existing imports.
 settings = SimpleNamespace(
     API_BASE_URL=API_BASE_URL,
     QADAM_API_BASE_URL=QADAM_API_BASE_URL,
+    PUBLIC_BASE_URL=PUBLIC_BASE_URL,
     PORT=PORT,
     DATABASE_URL=DATABASE_URL,
     ADMIN_SECRET=ADMIN_SECRET,

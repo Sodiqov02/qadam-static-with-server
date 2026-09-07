@@ -6,7 +6,8 @@ The same application image can run behind Caddy without publishing FastAPI port 
 
 ```bash
 cp .env.example .env
-# Set API_BASE_URL=https://your-domain.example, ADMIN_SECRET, QADAM_DOMAIN,
+# Set API_BASE_URL=https://your-domain.example, PUBLIC_BASE_URL=https://your-domain.example,
+# ADMIN_SECRET, QADAM_DOMAIN,
 # and a URL-safe POSTGRES_PASSWORD in .env.
 docker compose -f compose.production.yaml config
 docker compose -f compose.production.yaml up --build -d
@@ -24,6 +25,7 @@ Back up both `qadam_postgres_data` and `/data` uploads. Prefer `pg_dump`/`pg_res
 - Configure the web process from `Procfile`: `uvicorn run_server:app --host 0.0.0.0 --port $PORT`.
 - Configure the worker process from `Procfile`: `python run_bot.py`.
 - Set `API_BASE_URL` to the public HTTPS app URL.
+- Set `PUBLIC_BASE_URL` to the same public HTTPS origin. Telegram admin links use this value.
 - Set `ADMIN_SECRET` to a strong random value. Never commit or paste it into screenshots.
 - Decide upload persistence before launch:
   - mount a persistent Railway Volume at `/data`;

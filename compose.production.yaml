@@ -8,7 +8,8 @@ services:
     volumes:
       - qadam_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qadam} -d ${POSTGRES_DB:-qadam}"]
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qadam} -d ${POSTGRES_DB:-qadam}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -26,6 +27,7 @@ services:
       APP_ENV: production
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET in the VPS environment}
       API_BASE_URL: ${API_BASE_URL:?Set API_BASE_URL in the VPS environment}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in the VPS environment}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-qadam}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-qadam}
       FORWARDED_ALLOW_IPS: 127.0.0.1,172.30.0.2
     depends_on:
@@ -44,6 +46,7 @@ services:
       APP_ENV: production
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET in the VPS environment}
       API_BASE_URL: ${API_BASE_URL:?Set API_BASE_URL in the VPS environment}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL in the VPS environment}
       QADAM_API_BASE_URL: http://api:8000
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-qadam}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-qadam}
     networks:

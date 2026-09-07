@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramAPIError
 from src.config import settings
 from src.db_models import Tenant
 from src.notifier import best_effort_notify, notify_order_status_changed
+from src.public_urls import build_public_admin_menu_url
 from src.store import create_admin_login_token_for_tenant, update_order_status
 
 logger = logging.getLogger(__name__)
@@ -18,12 +19,7 @@ def create_admin_router(tenant: Tenant) -> Router:
     user_last_message_id: dict[int, int] = {}
 
     def _admin_menu_url(token: str) -> str:
-        base_url = (settings.API_BASE_URL or "").rstrip("/")
-        if base_url.endswith("/api"):
-            base_url = base_url[:-4]
-        if not base_url:
-            base_url = "http://localhost:8000"
-        return f"{base_url}/admin/menu/{tenant.slug}?admin_token={token}"
+        return build_public_admin_menu_url(settings.PUBLIC_BASE_URL, tenant.slug, token)
 
     def admin_only(func):
         @wraps(func)
